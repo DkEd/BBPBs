@@ -1,0 +1,18 @@
+{
+  "name": "strava-kudos-standalone",
+  "version": "1.0.0",
+  "description": "Standalone Strava Auto-Kudos Bot with Redis Batching",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js"
+  },
+  "dependencies": {
+    "axios": "^1.6.0",
+    "express": "^4.18.2",
+    "ioredis": "^5.3.2",
+    "moment-timezone": "^0.5.43"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}
