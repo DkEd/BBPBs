@@ -3,23 +3,20 @@ import pandas as pd
 import redis
 import json
 import os
-from datetime import datetime
+from datetime import datetime, date
 
-# --- SECURE UPSTASH CONNECTION VIA URL ---
-# In Render, name your variable: REDIS_URL
+# --- SECURE UPSTASH CONNECTION ---
 redis_url = os.environ.get("REDIS_URL")
-
 try:
     r = redis.from_url(redis_url, decode_responses=True)
 except Exception as e:
-    st.error("Could not connect to Redis. Check your Environment Variables.")
+    st.error("Redis Connection Error. Check REDIS_URL in Render.")
 
-# --- CATEGORY LOGIC (Race Date - DOB) ---
+# --- CATEGORY LOGIC ---
 def get_category(dob_str, race_date_str):
     dob = datetime.strptime(dob_str, '%Y-%m-%d')
     race_date = datetime.strptime(race_date_str, '%Y-%m-%d')
     age = race_date.year - dob.year - ((race_date.month, race_date.day) < (dob.month, dob.day))
-    
     if age < 40: return "Senior"
     if age < 50: return "V40"
     if age < 60: return "V50"
@@ -33,7 +30,7 @@ def time_to_seconds(t_str):
         if len(parts) == 2: return parts[0] * 60 + parts[1]
     except: return None
 
-# --- UI LAYOUT ---
+# --- UI ---
 st.set_page_config(page_title="Club Leaderboard", layout="wide")
 st.title("🏆 Club Leaderboard")
 
@@ -43,14 +40,11 @@ tab1, tab2, tab3 = st.tabs(["Leaderboard", "Add Result", "Admin Tools"])
 with tab1:
     view = st.radio("Display Filter", ["All-Time Records", "2026 Season"], horizontal=True)
     raw_results = r.lrange("race_results", 0, -1)
-    
     if raw_results:
         df = pd.DataFrame([json.loads(res) for res in raw_results])
         if view == "2026 Season":
             df = df[pd.to_datetime(df['race_date']).dt.year == 2026]
-        
         df['Category'] = df.apply(lambda x: get_category(x['dob'], x['race_date']), axis=1)
-        
         distances = ["Marathon", "HM", "10 Mile", "10k", "5k"]
         for d in distances:
             st.header(f"🏁 {d}")
@@ -73,16 +67,16 @@ with tab1:
 with tab2:
     st.header("Log a Race Result")
     members_raw = r.lrange("members", 0, -1)
-    members = [json.loads(m) for m in members_raw]
-    if members:
+    members_list = [json.loads(m) for m in members_raw]
+    if members_list:
         with st.form("race_form", clear_on_submit=True):
-            name_sel = st.selectbox("Select Runner", sorted([m['name'] for m in members]))
-            m_info = next(i for i in members if i["name"] == name_sel)
+            # Sort names alphabetically
+            name_sel = st.selectbox("Select Runner", sorted([m['name'] for m in members_list]))
+            m_info = next(i for i in members_list if i["name"] == name_sel)
             dist = st.selectbox("Distance", ["5k", "10k", "10 Mile", "HM", "Marathon"])
             t_str = st.text_input("Time (HH:MM:SS)", "00:00:00")
             loc = st.text_input("Where (Location)")
             dt = st.date_input("When (Race Date)")
-            
             if st.form_submit_button("Submit Result"):
                 secs = time_to_seconds(t_str)
                 if secs and loc:
@@ -100,11 +94,19 @@ with tab3:
     with st.form("mem_form", clear_on_submit=True):
         n = st.text_input("Full Name")
         g = st.selectbox("Gender", ["Male", "Female"])
-        b = st.date_input("Date of Birth")
+        # FIXED: Added min_value and a default value for better range
+        b = st.date_input("Date of Birth", 
+                          value=date(1990, 1, 1), 
+                          min_value=date(1900, 1, 1), 
+                          max_value=date.today())
+        
         if st.form_submit_button("Add Member"):
-            r.rpush("members", json.dumps({"name":n, "gender":g, "dob":b.strftime('%Y-%m-%d')}))
-            st.success(f"{n} added!")
-            st.rerun()
+            if n and b: # SAFETY CHECK
+                r.rpush("members", json.dumps({"name":n, "gender":g, "dob":b.strftime('%Y-%m-%d')}))
+                st.success(f"{n} added!")
+                st.rerun()
+            else:
+                st.error("Please provide a name and valid date.")
 
     st.divider()
     st.header("Data Cleanup")
@@ -112,10 +114,8 @@ with tab3:
     with col1:
         if st.button("🗑️ Delete Last Race Result"):
             r.rpop("race_results")
-            st.warning("Last race result removed.")
             st.rerun()
     with col2:
         if st.button("👤 Delete Last Member Added"):
             r.rpop("members")
-            st.warning("Last member removed.")
             st.rerun()
