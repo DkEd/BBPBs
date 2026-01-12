@@ -20,6 +20,12 @@ def get_admin_password():
     stored_pwd = r.get("admin_password")
     return stored_pwd if stored_pwd else "admin123"
 
+def get_club_logo():
+    # Default to the URL you provided if none is set in Redis
+    stored_logo = r.get("club_logo_url")
+    default_logo = "https://scontent-lhr6-2.xx.fbcdn.net/v/t39.30808-6/613136946_122094772515215234_2783950400659519915_n.jpg?_nc_cat=105&ccb=1-7&_nc_sid=cc71e4&_nc_ohc=kvHoy9QIOF4Q7kNvwGRAj6K&_nc_oc=Adm0NLaoEHZoixq2SnIjN_KH-Zfwbqu11R1pz8aAV3sMB2Ru2wRsi3H4j7cerOPAUmGOmUh3Q6dC7TWGA82mWYDi&_nc_zt=23&_nc_ht=scontent-lhr6-2.xx&_nc_gid=5GS-5P76DuiR2umpX-xI5w&oh=00_AfquWT54_DxkPrvTyRnSk2y3a3tBuCxJBvkLCS8rd7ANlg&oe=696A8E3D"
+    return stored_logo if stored_logo else default_logo
+
 def get_category(dob_str, race_date_str):
     try:
         dob = datetime.strptime(dob_str, '%Y-%m-%d')
@@ -39,15 +45,10 @@ def time_to_seconds(t_str):
         if len(parts) == 2: return parts[0] * 60 + parts[1]
     except: return None
 
-def is_time_realistic(dist, secs):
-    limits = {"5k": 720, "10k": 1560, "10 Mile": 2700, "HM": 3480, "Marathon": 7200}
-    return secs >= limits.get(dist, 0)
-
 # --- HEADER & LOGO ---
 col_logo, col_title = st.columns([1, 5])
 with col_logo:
-    logo_url = "https://scontent-lhr6-2.xx.fbcdn.net/v/t39.30808-6/613136946_122094772515215234_2783950400659519915_n.jpg?_nc_cat=105&ccb=1-7&_nc_sid=cc71e4&_nc_ohc=kvHoy9QIOF4Q7kNvwGRAj6K&_nc_oc=Adm0NLaoEHZoixq2SnIjN_KH-Zfwbqu11R1pz8aAV3sMB2Ru2wRsi3H4j7cerOPAUmGOmUh3Q6dC7TWGA82mWYDi&_nc_zt=23&_nc_ht=scontent-lhr6-2.xx&_nc_gid=5GS-5P76DuiR2umpX-xI5w&oh=00_AfquWT54_DxkPrvTyRnSk2y3a3tBuCxJBvkLCS8rd7ANlg&oe=696A8E3D"
-    st.image(logo_url, width=120)
+    st.image(get_club_logo(), width=120)
 with col_title:
     st.markdown('<h1 style="color: #003366; margin-top: 10px;">Club Leaderboard</h1>', unsafe_allow_html=True)
 
@@ -61,7 +62,8 @@ with st.sidebar:
     if is_admin:
         st.success("Admin Access Granted")
         st.divider()
-        new_pwd = st.text_input("Update Password", type="password")
+        st.subheader("Update Credentials")
+        new_pwd = st.text_input("New Password", type="password")
         if st.button("Save New Password"):
             if new_pwd:
                 r.set("admin_password", new_pwd)
@@ -143,10 +145,20 @@ with tab3:
                     st.rerun()
     else: st.error("Admin Login Required")
 
-# --- TAB 4: ADMIN TOOLS (Validator & Maintenance) ---
+# --- TAB 4: ADMIN TOOLS ---
 with tab4:
     if is_admin:
-        st.header("🛠️ Bulk Data Management")
+        st.header("🛠️ Admin Dashboard")
+        
+        # --- NEW BRAND SETTINGS ---
+        with st.expander("🎨 Brand Settings (Logo)"):
+            new_logo_url = st.text_input("Club Logo URL", value=get_club_logo())
+            if st.button("Update Logo"):
+                r.set("club_logo_url", new_logo_url)
+                st.success("Logo updated!")
+                st.rerun()
+
+        st.divider()
         col_m, col_r = st.columns(2)
         with col_m:
             st.subheader("1. Import Members")
@@ -181,6 +193,7 @@ with tab4:
         st.subheader("📊 Maintenance")
         c1, c2 = st.columns(2)
         with c1:
+            raw_results = r.lrange("race_results", 0, -1)
             if raw_results:
                 csv_data = pd.DataFrame([json.loads(res) for res in raw_results]).to_csv(index=False).encode('utf-8')
                 st.download_button("📥 Download Database Backup", data=csv_data, file_name=f"club_backup_{date.today()}.csv")
