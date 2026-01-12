@@ -21,7 +21,6 @@ def get_admin_password():
     return stored_pwd if stored_pwd else "admin123"
 
 def get_club_logo():
-    # Default to the URL you provided if none is set in Redis
     stored_logo = r.get("club_logo_url")
     default_logo = "https://scontent-lhr6-2.xx.fbcdn.net/v/t39.30808-6/613136946_122094772515215234_2783950400659519915_n.jpg?_nc_cat=105&ccb=1-7&_nc_sid=cc71e4&_nc_ohc=kvHoy9QIOF4Q7kNvwGRAj6K&_nc_oc=Adm0NLaoEHZoixq2SnIjN_KH-Zfwbqu11R1pz8aAV3sMB2Ru2wRsi3H4j7cerOPAUmGOmUh3Q6dC7TWGA82mWYDi&_nc_zt=23&_nc_ht=scontent-lhr6-2.xx&_nc_gid=5GS-5P76DuiR2umpX-xI5w&oh=00_AfquWT54_DxkPrvTyRnSk2y3a3tBuCxJBvkLCS8rd7ANlg&oe=696A8E3D"
     return stored_logo if stored_logo else default_logo
@@ -62,7 +61,6 @@ with st.sidebar:
     if is_admin:
         st.success("Admin Access Granted")
         st.divider()
-        st.subheader("Update Credentials")
         new_pwd = st.text_input("New Password", type="password")
         if st.button("Save New Password"):
             if new_pwd:
@@ -70,10 +68,42 @@ with st.sidebar:
                 st.success("Updated!")
                 st.rerun()
 
-# --- MAIN UI ---
-tab1, tab2, tab3, tab4 = st.tabs(["🏆 Leaderboards", "⏱️ Activity", "👤 Members", "🛠️ Admin"])
+# --- MAIN UI TABS ---
+tab1, tab2, tab3, tab4, tab5 = st.tabs(["🏆 Leaderboards", "⏱️ Activity", "👤 Members", "🛠️ Admin", "👁️ View Controller"])
 
-# --- TAB 1: LEADERBOARD ---
+all_distances = ["5k", "10k", "10 Mile", "HM", "Marathon"]
+
+# --- TAB 5: VIEW CONTROLLER ---
+with tab5:
+    st.header("👁️ Board Visibility Settings")
+    st.write("Toggle which distances appear on the public **🏆 Leaderboards** tab.")
+    
+    # Store settings in Redis so they persist
+    stored_visibility = r.get("visible_distances")
+    default_visibility = all_distances if not stored_visibility else json.loads(stored_visibility)
+    
+    visible_list = []
+    cols = st.columns(len(all_distances))
+    for i, dist in enumerate(all_distances):
+        with cols[i]:
+            if st.checkbox(dist, value=(dist in default_visibility)):
+                visible_list.append(dist)
+    
+    if st.button("Save Visibility Settings"):
+        r.set("visible_distances", json.dumps(visible_list))
+        st.success("Leaderboard updated!")
+        st.rerun()
+
+    st.divider()
+    st.subheader("📋 Master Leaderboard (Full Version)")
+    st.caption("This section always shows all recorded distances for admin review.")
+    
+    raw_results = r.lrange("race_results", 0, -1)
+    if raw_results:
+        master_df = pd.DataFrame([json.loads(res) for res in raw_results])
+        st.dataframe(master_df.sort_values(['distance', 'time_seconds']), use_container_width=True, hide_index=True)
+
+# --- TAB 1: PUBLIC LEADERBOARD ---
 with tab1:
     current_year = datetime.now().year
     years = ["All-Time"] + [str(y) for y in range(2023, current_year + 1)]
@@ -81,6 +111,10 @@ with tab1:
     with col_filter:
         selected_year = st.selectbox("📅 Select Season:", years, index=0)
     
+    # Determine which distances to show
+    stored_visibility = r.get("visible_distances")
+    active_distances = json.loads(stored_visibility) if stored_visibility else all_distances
+
     raw_results = r.lrange("race_results", 0, -1)
     if raw_results:
         df = pd.DataFrame([json.loads(res) for res in raw_results])
@@ -93,7 +127,7 @@ with tab1:
             df['Category'] = df.apply(lambda x: get_category(x['dob'], x['race_date']), axis=1)
             cat_order = ["Senior", "V40", "V50", "V60", "V70"]
             
-            for d in ["5k", "10k", "10 Mile", "HM", "Marathon"]:
+            for d in active_distances:
                 st.markdown(f"### 🏁 {d} Records - {selected_year}")
                 m_col, f_col = st.columns(2)
                 for gen, col in [("Male", m_col), ("Female", f_col)]:
@@ -110,15 +144,14 @@ with tab1:
                 st.markdown("<br>", unsafe_allow_html=True)
     else: st.info("Database is empty.")
 
-# --- TAB 2: ACTIVITY FEED ---
+# --- TAB 2: ACTIVITY ---
 with tab2:
     st.header("Recent Race Activity")
-    raw_results = r.lrange("race_results", 0, -1)
     if raw_results:
         all_df = pd.DataFrame([json.loads(res) for res in raw_results]).sort_values('race_date', ascending=False)
         st.dataframe(all_df[['race_date', 'name', 'distance', 'time_display', 'location']], use_container_width=True, hide_index=True)
 
-# --- TAB 3: MEMBER MANAGEMENT ---
+# --- TAB 3: MEMBERS ---
 with tab3:
     if is_admin:
         col1, col2 = st.columns(2)
@@ -137,69 +170,31 @@ with tab3:
             if m_raw:
                 m_list = [json.loads(m) for m in m_raw]
                 st.dataframe(pd.DataFrame(m_list).sort_values('name'), use_container_width=True, hide_index=True)
-                m_del = st.selectbox("Select to Delete", [m['name'] for m in m_list])
-                if st.button("Delete Selected Member"):
-                    updated = [json.dumps(m) for m in m_list if m['name'] != m_del]
-                    r.delete("members")
-                    if updated: r.rpush("members", *updated)
-                    st.rerun()
-    else: st.error("Admin Login Required")
 
-# --- TAB 4: ADMIN TOOLS ---
+# --- TAB 4: ADMIN (Wipe/Import) ---
 with tab4:
     if is_admin:
-        st.header("🛠️ Admin Dashboard")
-        
-        # --- NEW BRAND SETTINGS ---
-        with st.expander("🎨 Brand Settings (Logo)"):
-            new_logo_url = st.text_input("Club Logo URL", value=get_club_logo())
-            if st.button("Update Logo"):
-                r.set("club_logo_url", new_logo_url)
-                st.success("Logo updated!")
-                st.rerun()
-
-        st.divider()
-        col_m, col_r = st.columns(2)
-        with col_m:
-            st.subheader("1. Import Members")
-            m_file = st.file_uploader("Upload Members CSV", type="csv")
-            if m_file and st.button("🚀 Confirm Member Import"):
-                m_df = pd.read_csv(m_file)
-                for _, row in m_df.iterrows():
-                    r.rpush("members", json.dumps({"name": str(row['name']), "gender": str(row['gender']), "dob": str(row['dob'])}))
-                st.success("Imported!")
-                st.rerun()
-        with col_r:
-            st.subheader("2. Import Results (With Validation)")
-            r_file = st.file_uploader("Upload Results CSV", type="csv")
-            if r_file:
-                r_df = pd.read_csv(r_file)
-                m_lookup = {json.loads(m)['name']: json.loads(m) for m in r.lrange("members", 0, -1)}
-                errors = []
-                for i, row in r_df.iterrows():
-                    if str(row['name']) not in m_lookup: errors.append(f"Row {i+2}: Member '{row['name']}' not found.")
-                if errors:
-                    st.error("Validation Failed")
-                    for e in errors[:5]: st.write(f"- {e}")
-                elif st.button("💾 Save Results"):
-                    for _, row in r_df.iterrows():
-                        m = m_lookup[str(row['name'])]
-                        entry = {"name": str(row['name']), "gender": m['gender'], "dob": m['dob'], "distance": str(row['distance']), "time_seconds": time_to_seconds(str(row['time_display'])), "time_display": str(row['time_display']), "location": str(row['location']), "race_date": str(row['race_date'])}
-                        r.rpush("race_results", json.dumps(entry))
-                    st.success("Results Updated!")
-                    st.rerun()
-
-        st.divider()
-        st.subheader("📊 Maintenance")
-        c1, c2 = st.columns(2)
-        with c1:
-            raw_results = r.lrange("race_results", 0, -1)
-            if raw_results:
-                csv_data = pd.DataFrame([json.loads(res) for res in raw_results]).to_csv(index=False).encode('utf-8')
-                st.download_button("📥 Download Database Backup", data=csv_data, file_name=f"club_backup_{date.today()}.csv")
-        with c2:
-            if st.button("🗑️ Wipe All Results"):
-                r.delete("race_results")
-                st.success("Records cleared.")
-                st.rerun()
+        st.header("🛠️ Admin Tools")
+        m_file = st.file_uploader("Upload Members CSV", type="csv")
+        if m_file and st.button("🚀 Import Members"):
+            m_df = pd.read_csv(m_file)
+            for _, row in m_df.iterrows():
+                r.rpush("members", json.dumps({"name": str(row['name']), "gender": str(row['gender']), "dob": str(row['dob'])}))
+            st.success("Imported!")
+            
+        r_file = st.file_uploader("Upload Results CSV", type="csv")
+        if r_file and st.button("💾 Import Results"):
+            r_df = pd.read_csv(r_file)
+            m_lookup = {json.loads(m)['name']: json.loads(m) for m in r.lrange("members", 0, -1)}
+            for _, row in r_df.iterrows():
+                if str(row['name']) in m_lookup:
+                    m = m_lookup[str(row['name'])]
+                    entry = {"name": str(row['name']), "gender": m['gender'], "dob": m['dob'], "distance": str(row['distance']), "time_seconds": time_to_seconds(str(row['time_display'])), "time_display": str(row['time_display']), "location": str(row['location']), "race_date": str(row['race_date'])}
+                    r.rpush("race_results", json.dumps(entry))
+            st.success("Saved!")
+            st.rerun()
+            
+        if st.button("🗑️ Wipe All Results"):
+            r.delete("race_results")
+            st.rerun()
     else: st.error("Admin Login Required")
