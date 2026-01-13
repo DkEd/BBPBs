@@ -8,12 +8,11 @@ from datetime import datetime, date
 # --- CONFIG & CONNECTION ---
 st.set_page_config(page_title="AutoKudos Leaderboard", layout="wide")
 
-# Connect to Upstash Redis
 redis_url = os.environ.get("REDIS_URL")
 try:
     r = redis.from_url(redis_url, decode_responses=True)
 except Exception as e:
-    st.error(f"Redis Connection Failed: {e}")
+    st.error(f"Redis Connection Failed: Check your environment variables.")
 
 # --- HELPER FUNCTIONS ---
 def get_admin_password():
@@ -58,6 +57,8 @@ with st.sidebar:
     pwd_input = st.text_input("Password", type="password")
     is_admin = (pwd_input == get_admin_password())
 
+# --- TABS DEFINITION ---
+# Only Leaderboard is available to the public.
 tab1, tab2, tab3, tab4, tab5 = st.tabs(["🏆 Leaderboards", "⏱️ Activity", "👤 Members", "🛠️ Admin", "👁️ View Controller"])
 
 all_distances = ["5k", "10k", "10 Mile", "HM", "Marathon"]
@@ -72,7 +73,6 @@ with tab1:
     if raw_res:
         df = pd.DataFrame([json.loads(res) for res in raw_res])
         df['race_date_dt'] = pd.to_datetime(df['race_date'])
-        
         years = ["All-Time"] + sorted([str(y) for y in df['race_date_dt'].dt.year.unique()], reverse=True)
         sel_year = st.selectbox("📅 Select Season:", years)
         
@@ -101,21 +101,29 @@ with tab1:
                                     <div><span style="background:#FFD700; color:#003366; padding:2px 6px; border-radius:4px; font-weight:bold; font-size:0.8em; margin-right:8px;">{r_data['Category']}</span><b>{r_data['name']}</b><br><small>{r_data['location']} | {r_data['race_date']}</small></div>
                                     <div style="font-weight:800; color:#003366; font-size:1.1em;">{r_data['time_display']}</div></div>''', unsafe_allow_html=True)
                     else: st.markdown('<div style="border:2px solid #003366; border-top:none; padding:10px; text-align:center; color:#999; font-size:0.8em;">No records</div>', unsafe_allow_html=True)
-            st.markdown("<br>", unsafe_allow_html=True)
-    else: st.info("No data found. Upload members and results in the Admin tab.")
+    else: st.info("Welcome to AutoKudos! The leaderboard will appear once results are uploaded.")
 
-# --- TAB 2 & 3: ACTIVITY & MEMBERS ---
+# --- PROTECTED TABS ---
+# Tab 2 (Activity)
 with tab2:
-    if raw_res:
-        st.header("Recent Activity")
-        st.dataframe(pd.DataFrame([json.loads(res) for res in raw_res]).sort_values('race_date', ascending=False), use_container_width=True, hide_index=True)
-with tab3:
-    raw_mem = r.lrange("members", 0, -1)
-    if raw_mem:
-        st.header("Member Directory")
-        st.dataframe(pd.DataFrame([json.loads(m) for m in raw_mem]).sort_values('name'), use_container_width=True, hide_index=True)
+    if is_admin:
+        if raw_res:
+            st.header("Recent Activity")
+            st.dataframe(pd.DataFrame([json.loads(res) for res in raw_res]).sort_values('race_date', ascending=False), use_container_width=True, hide_index=True)
+        else: st.info("No activity recorded.")
+    else: st.warning("🔒 This tab is restricted to club administrators.")
 
-# --- TAB 4: ADMIN ---
+# Tab 3 (Members)
+with tab3:
+    if is_admin:
+        raw_mem = r.lrange("members", 0, -1)
+        if raw_mem:
+            st.header("Member Directory")
+            st.dataframe(pd.DataFrame([json.loads(m) for m in raw_mem]).sort_values('name'), use_container_width=True, hide_index=True)
+        else: st.info("No members registered.")
+    else: st.warning("🔒 Member data is private. Please login to view.")
+
+# Tab 4 (Admin)
 with tab4:
     if is_admin:
         st.header("🛠️ Admin Controls")
@@ -165,9 +173,9 @@ with tab4:
         st.divider()
         if st.button("🗑️ Wipe All Results"): r.delete("race_results"); st.rerun()
         if st.button("👥 Wipe All Members"): r.delete("members"); st.rerun()
-    else: st.info("Login as admin to manage data.")
+    else: st.warning("🔒 Admin Login Required.")
 
-# --- TAB 5: VIEW CONTROLLER ---
+# Tab 5 (View Controller)
 with tab5:
     if is_admin:
         st.header("👁️ View Controller")
@@ -186,6 +194,4 @@ with tab5:
             r.set("visible_distances", json.dumps(visible_list))
             r.set("age_mode", "10Y" if "10" in age_choice else "5Y")
             st.success("Updated!"); st.rerun()
-        st.divider()
-        st.subheader("Master Table (Admin View)")
-        if raw_res: st.dataframe(pd.DataFrame([json.loads(res) for res in raw_res]), use_container_width=True)
+    else: st.warning("🔒 Admin Login Required.")
