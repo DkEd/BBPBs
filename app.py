@@ -8,7 +8,6 @@ from datetime import datetime, date
 # --- CONFIG & CONNECTION ---
 st.set_page_config(page_title="AutoKudos Admin", layout="wide")
 
-# Connect to Upstash Redis
 redis_url = os.environ.get("REDIS_URL")
 try:
     r = redis.from_url(redis_url, decode_responses=True)
@@ -42,7 +41,7 @@ def time_to_seconds(t_str):
         if len(parts) == 2: return parts[0] * 60 + parts[1]
     except: return None
 
-# --- UI HEADER (RESTORED) ---
+# --- UI HEADER ---
 col_logo, col_title = st.columns([1, 5])
 with col_logo:
     st.image(get_club_logo(), width=120)
@@ -55,9 +54,7 @@ with st.sidebar:
     pwd_input = st.text_input("Password", type="password")
     is_admin = (pwd_input == get_admin_password())
 
-# --- TABS ---
 tab1, tab2, tab3, tab4, tab5 = st.tabs(["🏆 Leaderboards", "⏱️ Activity", "👤 Members", "🛠️ Admin & Imports", "👁️ View Controller"])
-
 all_distances = ["5k", "10k", "10 Mile", "HM", "Marathon"]
 
 # --- TAB 1: LEADERBOARDS ---
@@ -92,24 +89,19 @@ with tab1:
                                 <div style="font-weight:800; color:#003366; font-size:1.1em;">{r_data['time_display']}</div></div>''', unsafe_allow_html=True)
                     else: st.markdown('<div style="border:2px solid #003366; border-top:none; padding:10px; text-align:center; color:#999; font-size:0.8em;">No records</div>', unsafe_allow_html=True)
 
-# --- TAB 2 & 3: ACTIVITY & MEMBERS ---
+# --- TAB 2/3 (PROTECTED) ---
 with tab2:
     if is_admin:
         if raw_res: st.dataframe(pd.DataFrame([json.loads(res) for res in raw_res]).sort_values('race_date', ascending=False), use_container_width=True, hide_index=True)
-    else: st.warning("Admin access required.")
 with tab3:
     if is_admin:
         raw_mem = r.lrange("members", 0, -1)
         if raw_mem: st.dataframe(pd.DataFrame([json.loads(m) for m in raw_mem]).sort_values('name'), use_container_width=True, hide_index=True)
-    else: st.warning("Admin access required.")
 
-# --- TAB 4: ADMIN & BULK IMPORTS ---
+# --- TAB 4: ADMIN & BULK ---
 with tab4:
     if is_admin:
-        st.header("🛠️ Approvals & Bulk Tools")
-        
-        # 1. PENDING FROM BBPB
-        st.subheader("📋 Pending Submissions")
+        st.subheader("📋 Pending Submissions (BBPB)")
         pending_raw = r.lrange("pending_results", 0, -1)
         if pending_raw:
             m_raw = r.lrange("members", 0, -1)
@@ -117,20 +109,17 @@ with tab4:
             for i, p_json in enumerate(pending_raw):
                 p = json.loads(p_json)
                 with st.expander(f"Review: {p['name']} - {p['distance']}"):
-                    st.write(f"Time: {p['time_display']} | Loc: {p['location']} | Date: {p['race_date']}")
                     if p['name'] not in m_lookup: st.error("Name not in Member List!")
-                    c1, c2, _ = st.columns([1, 1, 4])
+                    c1, c2 = st.columns(2)
                     if c1.button("✅ Approve", key=f"app_{i}"):
-                        if p['name'] in m_lookup:
-                            m = m_lookup[p['name']]
-                            entry = {"name": p['name'], "gender": m['gender'], "dob": m['dob'], "distance": p['distance'], "time_seconds": time_to_seconds(p['time_display']), "time_display": p['time_display'], "location": p['location'], "race_date": p['race_date']}
-                            r.rpush("race_results", json.dumps(entry))
-                            r.lrem("pending_results", 1, p_json); st.rerun()
+                        m = m_lookup[p['name']]
+                        entry = {"name": p['name'], "gender": m['gender'], "dob": m['dob'], "distance": p['distance'], "time_seconds": time_to_seconds(p['time_display']), "time_display": p['time_display'], "location": p['location'], "race_date": p['race_date']}
+                        r.rpush("race_results", json.dumps(entry))
+                        r.lrem("pending_results", 1, p_json); st.rerun()
                     if c2.button("❌ Reject", key=f"rej_{i}"): r.lrem("pending_results", 1, p_json); st.rerun()
         else: st.info("No pending results.")
-
+        
         st.divider()
-        # 2. BULK IMPORTS
         st.subheader("🚀 Bulk CSV Import")
         col_m, col_r = st.columns(2)
         with col_m:
@@ -147,7 +136,6 @@ with tab4:
                         r.rpush("members", json.dumps({"name": n, "gender": str(row['gender']).strip(), "dob": db}))
                         added += 1
                 st.success(f"Added {added} members."); st.rerun()
-
         with col_r:
             r_file = st.file_uploader("Upload Results CSV", type="csv")
             if r_file and st.button("Import Results"):
@@ -171,18 +159,15 @@ with tab4:
         st.divider()
         if st.button("🗑️ Wipe All Results"): r.delete("race_results"); st.rerun()
         if st.button("👥 Wipe All Members"): r.delete("members"); st.rerun()
-    else: st.warning("Admin Login Required.")
 
-# --- TAB 5: VIEW CONTROLLER ---
 with tab5:
     if is_admin:
         st.header("👁️ View Controller")
         stored_vis = r.get("visible_distances")
         default_vis = all_distances if not stored_vis else json.loads(stored_vis)
-        cols = st.columns(len(all_distances))
         visible_list = []
-        for i, dist in enumerate(all_distances):
-            if cols[i].checkbox(dist, value=(dist in default_vis), key=f"v_{dist}"): visible_list.append(dist)
+        for dist in all_distances:
+            if st.checkbox(dist, value=(dist in default_vis), key=f"v_{dist}"): visible_list.append(dist)
         st.divider()
         stored_mode = r.get("age_mode") or "10Y"
         age_choice = st.radio("Age Grouping:", ["10 Years", "5 Years"], index=0 if stored_mode == "10Y" else 1)
@@ -190,4 +175,3 @@ with tab5:
             r.set("visible_distances", json.dumps(visible_list))
             r.set("age_mode", "10Y" if "10" in age_choice else "5Y")
             st.success("Updated!"); st.rerun()
-    else: st.warning("Admin Login Required.")
