@@ -14,7 +14,7 @@ try:
 except Exception as e:
     st.error("Redis Connection Failed. Please check your environment variables.")
 
-# --- HELPER FUNCTIONS (The Engine) ---
+# --- HELPER FUNCTIONS ---
 def format_time_string(t_str):
     try:
         parts = str(t_str).strip().split(':')
@@ -181,13 +181,17 @@ if is_admin:
             st.download_button("📥 Export to CSV", res_df.to_csv(index=False), "race_history.csv")
             
             for i, row in res_df.iterrows():
+                # Fix: State key must be different from button key
+                state_key = f"edit_active_{i}"
                 with st.container(border=True):
                     c1, c2, c3 = st.columns([3, 1, 1])
                     c1.write(f"**{row['name']}** | {row['distance']} | {row['time_display']} | {row['race_date']}")
-                    if c2.button("📝 Edit", key=f"re_ed_{i}"): st.session_state[f"re_ed_{i}"] = True
-                    if c3.button("🗑️", key=f"re_del_{i}"): r.lrem("race_results", 1, json.dumps(row.to_dict())); st.rerun()
+                    if c2.button("📝 Edit", key=f"btn_re_ed_{i}"): 
+                        st.session_state[state_key] = True
+                    if c3.button("🗑️", key=f"btn_re_del_{i}"): 
+                        r.lrem("race_results", 1, json.dumps(row.to_dict())); st.rerun()
                     
-                    if st.session_state.get(f"re_ed_{i}"):
+                    if st.session_state.get(state_key):
                         with st.form(f"f_re_ed_{i}"):
                             new_t = st.text_input("New Time", row['time_display'])
                             new_d = st.text_input("New Date", row['race_date'])
@@ -196,28 +200,33 @@ if is_admin:
                                 row['time_display'], row['race_date'] = new_t, new_d
                                 row['time_seconds'] = time_to_seconds(new_t)
                                 r.rpush("race_results", json.dumps(row.to_dict()))
-                                del st.session_state[f"re_ed_{i}"]; st.rerun()
+                                st.session_state[state_key] = False
+                                st.rerun()
 
     with tab4: # MEMBERS
         st.subheader("👥 Member Management")
         for i, m in enumerate(members_data):
+            # Fix: Unique state key for member editing
+            m_state_key = f"m_edit_active_{i}"
             with st.container(border=True):
                 c1, c2, c3 = st.columns([3, 1, 1])
                 c1.write(f"**{m['name']}** ({m.get('status', 'Active')})")
-                if c2.button("Toggle Status", key=f"m_st_{i}"):
+                if c2.button("Toggle Status", key=f"btn_m_st_{i}"):
                     r.lrem("members", 1, json.dumps(m))
                     m['status'] = "Left" if m.get('status', 'Active') == "Active" else "Active"
                     r.rpush("members", json.dumps(m)); st.rerun()
-                if c3.button("📝 Edit", key=f"m_ed_{i}"): st.session_state[f"m_ed_{i}"] = True
+                if c3.button("📝 Edit", key=f"btn_m_ed_{i}"): 
+                    st.session_state[m_state_key] = True
                 
-                if st.session_state.get(f"m_ed_{i}"):
+                if st.session_state.get(m_state_key):
                     with st.form(f"f_m_ed_{i}"):
                         new_dob = st.text_input("New DOB (YYYY-MM-DD)", m.get('dob', ''))
                         if st.form_submit_button("Save DOB"):
                             r.lrem("members", 1, json.dumps(m))
                             m['dob'] = new_dob
                             r.rpush("members", json.dumps(m))
-                            del st.session_state[f"m_ed_{i}"]; st.rerun()
+                            st.session_state[m_state_key] = False
+                            st.rerun()
 
     with tab5: # SYSTEM
         st.subheader("⚙️ System Tools")
