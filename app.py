@@ -3,7 +3,7 @@ import pandas as pd
 import redis
 import json
 import os
-from datetime import datetime
+from datetime import datetime, date
 
 # --- CONFIG & CONNECTION ---
 st.set_page_config(page_title="AutoKudos Admin", layout="wide")
@@ -16,7 +16,6 @@ except Exception as e:
 
 # --- HELPER FUNCTIONS ---
 def format_time_string(t_str):
-    """Ensures time is always HH:MM:SS."""
     try:
         parts = str(t_str).strip().split(':')
         if len(parts) == 2: return f"00:{parts[0].zfill(2)}:{parts[1].zfill(2)}"
@@ -82,18 +81,20 @@ with st.sidebar:
     is_admin = (pwd_input == get_admin_password())
     if st.button("🔄 Refresh Data", use_container_width=True): st.rerun()
 
-tab1, tab2, tab3, tab4, tab5 = st.tabs(["🏆 Leaderboards", "⏱️ Activity", "👤 Members", "🛠️ Approvals & Bulk", "👁️ View Controller"])
+tab1, tab2, tab3, tab4, tab5 = st.tabs(["🏆 Leaderboards", "⏱️ Activity", "👤 Members", "🛠️ Approvals & Bulk", "👁️ Settings"])
 all_distances = ["5k", "10k", "10 Mile", "HM", "Marathon"]
 
 # --- TAB 1: LEADERBOARDS ---
 with tab1:
     raw_res = r.lrange("race_results", 0, -1)
-    raw_mem_count = r.llen("members")
+    members_list = [json.loads(m) for m in r.lrange("members", 0, -1)]
+    active_members = [m['name'] for m in members_list if m.get('status', 'Active') == 'Active']
     
-    # Summary Box
+    # Summary Metrics
     c1, c2, c3 = st.columns(3)
-    c1.metric("Total Results", len(raw_res))
-    c2.metric("Club Members", raw_mem_count)
+    c1.metric("Total Records", len(raw_res))
+    c2.metric("Active Members", len(active_members))
+    c3.metric("Former Members", len(members_list) - len(active_members))
     
     if raw_res:
         df = pd.DataFrame([json.loads(res) for res in raw_res])
@@ -123,11 +124,12 @@ with tab1:
                     if not sub.empty:
                         leaders = sub.sort_values('time_seconds').groupby('Category').head(1)
                         for _, r_data in leaders.sort_values('Category').iterrows():
+                            # Ghosting check: Gray out name if not active
+                            name_style = "color:#003366;" if r_data['name'] in active_members else "color:#999; font-style:italic;"
                             st.markdown(f'''<div style="border:2px solid #003366; border-top:none; padding:12px; background:white; margin-bottom:-2px; display:flex; justify-content:space-between; align-items:center;">
-                                <div><span style="background:#FFD700; color:#003366; padding:2px 6px; border-radius:4px; font-weight:bold; font-size:0.8em; margin-right:8px;">{r_data['Category']}</span><b>{r_data['name']}</b><br><small>{r_data['location']} | {r_data['race_date']}</small></div>
+                                <div><span style="background:#FFD700; color:#003366; padding:2px 6px; border-radius:4px; font-weight:bold; font-size:0.8em; margin-right:8px;">{r_data['Category']}</span><b style="{name_style}">{r_data['name']}</b><br><small>{r_data['location']} | {r_data['race_date']}</small></div>
                                 <div style="font-weight:800; color:#003366; font-size:1.1em;">{r_data['time_display']}</div></div>''', unsafe_allow_html=True)
                     else: st.markdown('<div style="border:2px solid #003366; border-top:none; padding:10px; text-align:center; color:#999; font-size:0.8em;">No records</div>', unsafe_allow_html=True)
-    else: st.info("No results yet.")
 
 # --- PROTECTED ADMIN CONTENT ---
 if is_admin:
@@ -141,24 +143,52 @@ if is_admin:
                 if c2.button("🗑️", key=f"del_{i}"):
                     r.lrem("race_results", 1, json.dumps(item)); st.rerun()
 
-    with tab3: # MEMBERS
-        st.subheader("👤 Member Management")
+    with tab3: # MEMBERS & HEALTH CHECK
+        st.subheader("🛡️ Data Health Audit")
         raw_mem = r.lrange("members", 0, -1)
-        if raw_mem:
-            m_df = pd.DataFrame([json.loads(m) for m in raw_mem])
-            st.dataframe(m_df.sort_values('name'), use_container_width=True, hide_index=True)
-        if st.button("🗑️ Wipe All Members"):
-            if st.checkbox("Confirm wipe members?"): r.delete("members"); st.rerun()
+        members_data = [json.loads(m) for m in raw_mem]
+        
+        # Health Logic
+        missing_dob = [m['name'] for m in members_data if not m.get('dob') or m['dob'] == ""]
+        future_races = [json.loads(res) for res in r.lrange("race_results", 0, -1) if datetime.strptime(json.loads(res)['race_date'], '%Y-%m-%d').date() > date.today()]
+        
+        if missing_dob or future_races:
+            if missing_dob: st.error(f"⚠️ Missing DOB for: {', '.join(missing_dob)}")
+            if future_races: st.warning(f"🕒 Found {len(future_races)} races with future dates! Check Activity Log.")
+        else:
+            st.success("✅ Database Health: Excellent. All members have DOBs and dates are valid.")
 
-    with tab4: # APPROVALS & BOTH BULK UPLOADS
-        st.header("🛠️ Approvals & Bulk Tools")
-        if st.button("🧹 Run Database Deduplication"):
-            old, new = run_database_deduplication()
-            st.success(f"Removed {old-new} duplicates."); st.rerun()
+        st.divider()
+        st.subheader("👤 Member Management")
+        if members_data:
+            m_df = pd.DataFrame(members_data)
+            # Add Status Toggle
+            for i, row in m_df.iterrows():
+                col_name, col_stat = st.columns([3, 1])
+                status = row.get('status', 'Active')
+                col_name.write(f"**{row['name']}** ({row['gender']}) - {row['dob']}")
+                if col_stat.button("Mark as " + ("Left" if status == 'Active' else "Active"), key=f"stat_{i}"):
+                    new_status = "Left" if status == 'Active' else "Active"
+                    r.lrem("members", 1, json.dumps(row))
+                    row['status'] = new_status
+                    r.rpush("members", json.dumps(row)); st.rerun()
 
+    with tab4: # APPROVALS, BULK, EXPORT
+        st.header("🛠️ Admin Console")
+        
+        # EXPORT SECTION
+        st.subheader("📥 Data Export (Excel Friendly)")
+        e1, e2 = st.columns(2)
+        if raw_res:
+            res_csv = pd.DataFrame([json.loads(res) for res in raw_res]).to_csv(index=False)
+            e1.download_button("Download All Results (CSV)", res_csv, "bbpb_results.csv", "text/csv")
+        if members_data:
+            mem_csv = pd.DataFrame(members_data).to_csv(index=False)
+            e2.download_button("Download Members List (CSV)", mem_csv, "club_members.csv", "text/csv")
+
+        st.divider()
         st.subheader("📋 Pending Approvals")
         pending_raw = r.lrange("pending_results", 0, -1)
-        members_data = [json.loads(m) for m in r.lrange("members", 0, -1)]
         member_names = sorted([m['name'] for m in members_data])
 
         if pending_raw:
@@ -179,18 +209,16 @@ if is_admin:
                     if st.button("❌ Reject", key=f"rej_{i}"): r.lrem("pending_results", 1, p_json); st.rerun()
 
         st.divider()
-        st.subheader("🚀 Bulk Uploads")
+        st.subheader("🚀 Bulk Import")
         col_m, col_r = st.columns(2)
         with col_m:
-            st.write("**Members Upload**")
             m_file = st.file_uploader("Upload Members CSV (name,gender,dob)", type="csv")
             if m_file and st.button("Process Members"):
                 for _, row in pd.read_csv(m_file).iterrows():
-                    r.rpush("members", json.dumps({"name": str(row['name']).strip(), "gender": str(row['gender']).strip(), "dob": str(row['dob']).strip()}))
+                    r.rpush("members", json.dumps({"name": str(row['name']).strip(), "gender": str(row['gender']).strip(), "dob": str(row['dob']).strip(), "status": "Active"}))
                 st.success("Members Added!"); st.rerun()
         with col_r:
-            st.write("**Results Upload**")
-            r_file = st.file_uploader("Upload Results CSV (name,distance,time_display,location,race_date)", type="csv")
+            r_file = st.file_uploader("Upload Results CSV", type="csv")
             if r_file and st.button("Process Results"):
                 m_lookup = {m['name']: m for m in members_data}
                 added = 0
@@ -202,16 +230,19 @@ if is_admin:
                         r.rpush("race_results", json.dumps(entry)); added += 1
                 st.success(f"Added {added} results!"); st.rerun()
 
-    with tab5: # VIEW CONTROLLER
+    with tab5: # SETTINGS
         st.header("👁️ Global Settings")
         stored_vis = r.get("visible_distances")
         default_vis = all_distances if not stored_vis else json.loads(stored_vis)
         visible_list = [d for d in all_distances if st.checkbox(d, value=(d in default_vis), key=f"vc_{d}")]
         stored_mode = r.get("age_mode") or "10Y"
         age_choice = st.radio("Age Grouping:", ["10 Years", "5 Years"], index=0 if stored_mode == "10Y" else 1)
-        if st.button("Save Settings"):
+        if st.button("Save Global View Settings"):
             r.set("visible_distances", json.dumps(visible_list))
             r.set("age_mode", "10Y" if "10" in age_choice else "5Y"); st.success("Saved!")
+        st.divider()
+        if st.button("🗑️ Wipe All Results Database"):
+            if st.checkbox("Verify results wipe?"): r.delete("race_results"); st.rerun()
 else:
     for t in [tab2, tab3, tab4, tab5]:
-        with t: st.warning("🔒 Login required.")
+        with t: st.warning("🔒 Enter password in sidebar to unlock Admin Tools.")
