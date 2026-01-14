@@ -3,7 +3,7 @@ import pandas as pd
 import redis
 import json
 import os
-from datetime import datetime, date
+from datetime import datetime
 
 # --- CONFIG & CONNECTION ---
 st.set_page_config(page_title="AutoKudos Admin", layout="wide")
@@ -16,25 +16,30 @@ except Exception as e:
 
 # --- HELPER FUNCTIONS ---
 def format_time_string(t_str):
-    """Ensures time is always HH:MM:SS for the leaderboard cards."""
+    """Ensures time is always HH:MM:SS for uniform display."""
     try:
         parts = str(t_str).strip().split(':')
-        if len(parts) == 2: # MM:SS
+        if len(parts) == 2: # MM:SS -> 00:MM:SS
             return f"00:{parts[0].zfill(2)}:{parts[1].zfill(2)}"
-        elif len(parts) == 3: # HH:MM:SS
+        elif len(parts) == 3: # H:M:S -> HH:MM:SS
             return f"{parts[0].zfill(2)}:{parts[1].zfill(2)}:{parts[2].zfill(2)}"
         return t_str
     except:
         return t_str
 
+def time_to_seconds(t_str):
+    """Converts HH:MM:SS or MM:SS to total seconds for sorting."""
+    try:
+        parts = list(map(int, str(t_str).split(':')))
+        if len(parts) == 3: return parts[0] * 3600 + parts[1] * 60 + parts[2]
+        if len(parts) == 2: return parts[0] * 60 + parts[1]
+    except: return 999999 # Fallback for invalid times
+
 def get_admin_password():
-    stored_pwd = r.get("admin_password")
-    return stored_pwd if stored_pwd else "admin123"
+    return r.get("admin_password") or "admin123"
 
 def get_club_logo():
-    stored_logo = r.get("club_logo_url")
-    default_logo = "https://scontent-lhr6-2.xx.fbcdn.net/v/t39.30808-6/613136946_122094772515215234_2783950400659519915_n.jpg?_nc_cat=105&ccb=1-7&oh=00_AfquWT54_DxkPrvTyRnSk2y3a3tBuCxJBvkLCS8rd7ANlg&oe=696A8E3D"
-    return stored_logo if stored_logo else default_logo
+    return r.get("club_logo_url") or "https://scontent-lhr6-2.xx.fbcdn.net/v/t39.30808-6/613136946_122094772515215234_2783950400659519915_n.jpg?_nc_cat=105&ccb=1-7&oh=00_AfquWT54_DxkPrvTyRnSk2y3a3tBuCxJBvkLCS8rd7ANlg&oe=696A8E3D"
 
 def get_category(dob_str, race_date_str, mode="10Y"):
     try:
@@ -43,40 +48,53 @@ def get_category(dob_str, race_date_str, mode="10Y"):
         age = race_date.year - dob.year - ((race_date.month, race_date.day) < (dob.month, dob.day))
         threshold = 35 if mode == "5Y" else 40
         step = 5 if mode == "5Y" else 10
-        if age < threshold:
-            return "Senior"
+        if age < threshold: return "Senior"
         return f"V{(age // step) * step}"
-    except:
-        return "Unknown"
+    except: return "Unknown"
 
-def time_to_seconds(t_str):
-    try:
-        parts = list(map(int, str(t_str).split(':')))
-        if len(parts) == 3: return parts[0] * 3600 + parts[1] * 60 + parts[2]
-        if len(parts) == 2: return parts[0] * 60 + parts[1]
-    except: return None
+# --- DUPLICATE & CLEANUP LOGIC ---
+def is_duplicate(name, race_date):
+    """Checks for existing Name + Date combination."""
+    current_results = r.lrange("race_results", 0, -1)
+    for res_json in current_results:
+        res = json.loads(res_json)
+        if res['name'] == name and res['race_date'] == race_date:
+            return True
+    return False
+
+def run_database_deduplication():
+    """Wipes duplicates, keeping the fastest time for any shared Name+Date."""
+    raw_res = r.lrange("race_results", 0, -1)
+    if not raw_res: return 0, 0
+    unique_entries = {}
+    initial_count = len(raw_res)
+    for res_json in raw_res:
+        data = json.loads(res_json)
+        key = (data['name'], data['race_date'])
+        if key not in unique_entries or data['time_seconds'] < json.loads(unique_entries[key])['time_seconds']:
+            unique_entries[key] = res_json
+    r.delete("race_results")
+    for final_json in unique_entries.values():
+        r.rpush("race_results", final_json)
+    return initial_count, len(unique_entries)
 
 # --- UI HEADER ---
 col_logo, col_title = st.columns([1, 5])
-with col_logo:
-    st.image(get_club_logo(), width=120)
-with col_title:
-    st.markdown('<h1 style="color: #003366; margin-top: 10px;">AutoKudos Admin Portal</h1>', unsafe_allow_html=True)
+with col_logo: st.image(get_club_logo(), width=120)
+with col_title: st.markdown('<h1 style="color: #003366; margin-top: 10px;">AutoKudos Admin Portal</h1>', unsafe_allow_html=True)
 
-# --- SIDEBAR (LOGIN & REFRESH) ---
+# --- SIDEBAR ---
 with st.sidebar:
     st.markdown('<h2 style="color: #003366;">🔐 Admin Login</h2>', unsafe_allow_html=True)
     pwd_input = st.text_input("Password", type="password")
     is_admin = (pwd_input == get_admin_password())
     st.divider()
-    if st.button("🔄 Refresh All Data", use_container_width=True):
-        st.rerun()
+    if st.button("🔄 Refresh All Data", use_container_width=True): st.rerun()
 
-# --- TABS DEFINITION ---
 tab1, tab2, tab3, tab4, tab5 = st.tabs(["🏆 Leaderboards", "⏱️ Activity", "👤 Members", "🛠️ Approvals & Bulk", "👁️ View Controller"])
 all_distances = ["5k", "10k", "10 Mile", "HM", "Marathon"]
 
-# --- TAB 1: LEADERBOARDS (VIEWABLE BY ALL) ---
+# --- TAB 1: LEADERBOARDS ---
 with tab1:
     stored_vis = r.get("visible_distances")
     active_dist = json.loads(stored_vis) if stored_vis else all_distances
@@ -86,16 +104,12 @@ with tab1:
     if raw_res:
         df = pd.DataFrame([json.loads(res) for res in raw_res])
         df['race_date_dt'] = pd.to_datetime(df['race_date'])
-        # Apply the format standardization
         df['time_display'] = df['time_display'].apply(format_time_string)
-        
         years = ["All-Time"] + sorted([str(y) for y in df['race_date_dt'].dt.year.unique()], reverse=True)
         sel_year = st.selectbox("📅 Season Select:", years)
-        
         display_df = df.copy()
         if sel_year != "All-Time":
             display_df = display_df[display_df['race_date_dt'].dt.year == int(sel_year)]
-            
         display_df['Category'] = display_df.apply(lambda x: get_category(x['dob'], x['race_date'], mode=age_mode), axis=1)
 
         for d in active_dist:
@@ -105,7 +119,6 @@ with tab1:
                 with col:
                     bg, tx = ("#003366", "white") if gen == "Male" else ("#FFD700", "#003366")
                     st.markdown(f'<div style="background-color:{bg}; color:{tx}; padding:10px; border-radius:8px 8px 0 0; text-align:center; font-weight:800; border:2px solid #003366;">{gen.upper()}</div>', unsafe_allow_html=True)
-                    
                     sub = display_df[(display_df['distance'] == d) & (display_df['gender'] == gen)]
                     if not sub.empty:
                         leaders = sub.sort_values('time_seconds').groupby('Category').head(1)
@@ -113,129 +126,85 @@ with tab1:
                             st.markdown(f'''<div style="border:2px solid #003366; border-top:none; padding:12px; background:white; margin-bottom:-2px; display:flex; justify-content:space-between; align-items:center;">
                                 <div><span style="background:#FFD700; color:#003366; padding:2px 6px; border-radius:4px; font-weight:bold; font-size:0.8em; margin-right:8px;">{r_data['Category']}</span><b>{r_data['name']}</b><br><small>{r_data['location']} | {r_data['race_date']}</small></div>
                                 <div style="font-weight:800; color:#003366; font-size:1.1em;">{r_data['time_display']}</div></div>''', unsafe_allow_html=True)
-                    else:
-                        st.markdown('<div style="border:2px solid #003366; border-top:none; padding:10px; text-align:center; color:#999; font-size:0.8em;">No records</div>', unsafe_allow_html=True)
-    else:
-        st.info("No results in the database yet.")
+                    else: st.markdown('<div style="border:2px solid #003366; border-top:none; padding:10px; text-align:center; color:#999; font-size:0.8em;">No records</div>', unsafe_allow_html=True)
+    else: st.info("No results in the database yet.")
 
-# --- PROTECTED CONTENT (TABS 2-5) ---
+# --- PROTECTED TABS ---
 if is_admin:
     with tab2:
-        st.subheader("⏱️ All Recorded Results")
+        st.subheader("⏱️ Activity Log & Manual Deletion")
         if raw_res:
-            res_df = pd.DataFrame([json.loads(res) for res in raw_res])
-            st.dataframe(res_df.sort_values('race_date', ascending=False), use_container_width=True, hide_index=True)
+            res_list = [json.loads(res) for res in raw_res]
+            for i, item in enumerate(sorted(res_list, key=lambda x: x['race_date'], reverse=True)):
+                c1, c2 = st.columns([5, 1])
+                c1.write(f"**{item['name']}** - {item['distance']} ({item['time_display']}) on {item['race_date']}")
+                if c2.button("🗑️", key=f"del_{i}"):
+                    r.lrem("race_results", 1, json.dumps(item))
+                    st.rerun()
 
     with tab3:
-        st.subheader("👤 Club Member List")
+        st.subheader("👤 Member List")
         raw_mem = r.lrange("members", 0, -1)
         if raw_mem:
-            mem_df = pd.DataFrame([json.loads(m) for m in raw_mem])
-            st.dataframe(mem_df.sort_values('name'), use_container_width=True, hide_index=True)
+            st.dataframe(pd.DataFrame([json.loads(m) for m in raw_mem]), use_container_width=True, hide_index=True)
 
     with tab4:
-        st.header("🛠️ Approvals & Bulk Tools")
-        
-        # 1. PENDING APPROVALS
+        st.header("🛠️ Approvals & Cleanup")
+        # DEDUPLICATION BUTTON
+        if st.button("🧹 Remove All Existing Duplicates", type="primary"):
+            old, new = run_database_deduplication()
+            st.success(f"Removed {old-new} duplicates. Total records: {new}")
+            st.rerun()
+
+        # APPROVAL QUEUE
         st.subheader("📋 Pending BBPB Submissions")
         pending_raw = r.lrange("pending_results", 0, -1)
         if pending_raw:
             m_lookup = {json.loads(m)['name']: json.loads(m) for m in r.lrange("members", 0, -1)}
             for i, p_json in enumerate(pending_raw):
                 p = json.loads(p_json)
-                with st.expander(f"Review: {p['name']} - {p['distance']} ({format_time_string(p['time_display'])})"):
-                    st.write(f"**Location:** {p['location']} | **Date:** {p['race_date']}")
-                    if p['name'] not in m_lookup:
-                        st.error("Runner not found in Members list! Add them to 'Members' first.")
+                with st.expander(f"Review: {p['name']} - {p['race_date']}"):
+                    dup = is_duplicate(p['name'], p['race_date'])
+                    if dup: st.error("🚨 DUPLICATE: Runner already has a result for this date.")
+                    if p['name'] not in m_lookup: st.warning("Runner not in Members list.")
                     else:
                         m = m_lookup[p['name']]
-                        st.success(f"Match Found: {m['gender']} | DOB: {m['dob']}")
                         c1, c2 = st.columns(2)
                         if c1.button("✅ Approve", key=f"app_{i}"):
-                            entry = {
-                                "name": p['name'], "gender": m['gender'], "dob": m['dob'],
-                                "distance": p['distance'], "time_seconds": time_to_seconds(p['time_display']),
-                                "time_display": format_time_string(p['time_display']),
-                                "location": p['location'], "race_date": p['race_date']
-                            }
+                            entry = {"name": p['name'], "gender": m['gender'], "dob": m['dob'], "distance": p['distance'], "time_seconds": time_to_seconds(p['time_display']), "time_display": format_time_string(p['time_display']), "location": p['location'], "race_date": p['race_date']}
                             r.rpush("race_results", json.dumps(entry))
-                            r.lrem("pending_results", 1, p_json)
-                            st.rerun()
+                            r.lrem("pending_results", 1, p_json); st.rerun()
                         if c2.button("❌ Reject", key=f"rej_{i}"):
-                            r.lrem("pending_results", 1, p_json)
-                            st.rerun()
-        else:
-            st.info("No submissions waiting for approval.")
-
+                            r.lrem("pending_results", 1, p_json); st.rerun()
+        
         st.divider()
-        # 2. TEMPLATE DOWNLOADS
-        st.subheader("📥 Download CSV Templates")
-        t1, t2 = st.columns(2)
-        t1.download_button("Download Members Template", "name,gender,dob\nJohn Smith,Male,1985-05-15", "members_template.csv")
-        t2.download_button("Download Results Template", "name,distance,time_display,location,race_date\nJohn Smith,5k,00:19:45,Leeds,2025-01-01", "results_template.csv")
-
-        st.divider()
-        # 3. BULK IMPORTS
-        st.subheader("🚀 Bulk Upload")
-        col_m, col_r = st.columns(2)
-        with col_m:
-            m_file = st.file_uploader("Upload Members CSV", type="csv")
-            if m_file and st.button("Process Members"):
-                m_df = pd.read_csv(m_file)
-                for _, row in m_df.iterrows():
-                    r.rpush("members", json.dumps({"name": str(row['name']).strip(), "gender": str(row['gender']).strip(), "dob": str(row['dob']).strip()}))
-                st.success("Members imported successfully!"); st.rerun()
-        with col_r:
-            r_file = st.file_uploader("Upload Results CSV", type="csv")
-            if r_file and st.button("Process Results"):
-                m_lookup = {json.loads(m)['name']: json.loads(m) for m in r.lrange("members", 0, -1)}
-                r_df = pd.read_csv(r_file)
-                added = 0
-                for _, row in r_df.iterrows():
-                    n = str(row['name']).strip()
-                    if n in m_lookup:
-                        m = m_lookup[n]
-                        entry = {
-                            "name": n, "gender": m['gender'], "dob": m['dob'],
-                            "distance": str(row['distance']).strip(),
-                            "time_seconds": time_to_seconds(str(row['time_display'])),
-                            "time_display": format_time_string(str(row['time_display'])),
-                            "location": str(row['location']).strip(),
-                            "race_date": str(row['race_date']).strip()
-                        }
-                        r.rpush("race_results", json.dumps(entry))
-                        added += 1
-                st.success(f"Imported {added} results!"); st.rerun()
-
-        st.divider()
-        if st.button("🗑️ Wipe All Results Data"):
-            if st.checkbox("Confirm Wipe?"):
-                r.delete("race_results")
-                st.rerun()
+        st.subheader("🚀 Bulk Import")
+        st.download_button("Download Template", "name,distance,time_display,location,race_date\nJohn Smith,5k,00:19:45,Leeds,2025-01-01", "results_template.csv")
+        r_file = st.file_uploader("Upload Results CSV", type="csv")
+        if r_file and st.button("Process CSV"):
+            m_lookup = {json.loads(m)['name']: json.loads(m) for m in r.lrange("members", 0, -1)}
+            r_df = pd.read_csv(r_file)
+            added, skipped = 0, 0
+            for _, row in r_df.iterrows():
+                n, d_str = str(row['name']).strip(), str(row['race_date']).strip()
+                if n in m_lookup and not is_duplicate(n, d_str):
+                    m = m_lookup[n]
+                    entry = {"name": n, "gender": m['gender'], "dob": m['dob'], "distance": str(row['distance']).strip(), "time_seconds": time_to_seconds(str(row['time_display'])), "time_display": format_time_string(str(row['time_display'])), "location": str(row['location']).strip(), "race_date": d_str}
+                    r.rpush("race_results", json.dumps(entry)); added += 1
+                else: skipped += 1
+            st.success(f"Added {added}, Skipped {skipped} (duplicates or missing members)"); st.rerun()
 
     with tab5:
-        st.header("👁️ View Controller")
+        st.header("👁️ Global Settings")
         stored_vis = r.get("visible_distances")
         default_vis = all_distances if not stored_vis else json.loads(stored_vis)
-        
-        st.write("Toggle which distances appear on the public leaderboard:")
-        visible_list = []
-        for d in all_distances:
-            if st.checkbox(d, value=(d in default_vis), key=f"vctrl_{d}"):
-                visible_list.append(d)
-        
-        st.divider()
+        visible_list = [d for d in all_distances if st.checkbox(d, value=(d in default_vis), key=f"vc_{d}")]
         stored_mode = r.get("age_mode") or "10Y"
-        age_choice = st.radio("Age Grouping Style:", ["10 Year Brackets (V40, V50)", "5 Year Brackets (V35, V40, V45)"], 
-                              index=0 if stored_mode == "10Y" else 1)
-        
-        if st.button("Save Global View Settings"):
+        age_choice = st.radio("Age Grouping:", ["10 Years", "5 Years"], index=0 if stored_mode == "10Y" else 1)
+        if st.button("Save View Settings"):
             r.set("visible_distances", json.dumps(visible_list))
             r.set("age_mode", "10Y" if "10" in age_choice else "5Y")
-            st.success("Leaderboard updated for everyone!"); st.rerun()
-
+            st.success("Settings saved!"); st.rerun()
 else:
-    # If not logged in, show warnings on protected tabs
     for t in [tab2, tab3, tab4, tab5]:
-        with t:
-            st.warning("🔒 This section is restricted. Please enter the Admin Password in the sidebar.")
+        with t: st.warning("🔒 Enter password in sidebar to access admin tools.")
