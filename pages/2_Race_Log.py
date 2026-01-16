@@ -1,27 +1,16 @@
 import streamlit as st
 import json
-import pandas as pd
-from helpers import get_redis
+from helpers import get_redis, format_time_string, time_to_seconds
 
-st.set_page_config(page_title="Race Log", layout="wide")
 r = get_redis()
+if not st.session_state.get('authenticated'): st.stop()
 
-if not st.session_state.get('authenticated'):
-    st.error("Please login on the Home page."); st.stop()
-
-st.header("📖 Standard PB Race Log")
-raw_results = r.lrange("race_results", 0, -1)
-
-if raw_results:
-    data_list = [json.loads(res) for res in raw_results]
-    for i, d in enumerate(data_list): d['idx'] = i
-    df = pd.DataFrame(data_list)
-    
-    st.dataframe(df[['race_date', 'name', 'distance', 'time_display', 'location']], use_container_width=True, hide_index=True)
-    
-    st.divider()
-    to_del = st.selectbox("Select Record to Delete", data_list, format_func=lambda x: f"{x['race_date']} - {x['name']} ({x['time_display']})")
-    if st.button("Delete Record"):
-        r.lset("race_results", to_del['idx'], "TO_DELETE")
-        r.lrem("race_results", 1, "TO_DELETE")
-        st.success("Deleted."); st.rerun()
+st.header("📋 Master Record Log")
+results = r.lrange("race_results", 0, -1)
+for idx, val in enumerate(results):
+    item = json.loads(val)
+    with st.container(border=True):
+        c1, c2 = st.columns([4,1])
+        c1.write(f"**{item['name']}** - {item['distance']} - {item['time_display']} ({item['race_date']})")
+        if c2.button("🗑️ Delete", key=f"del_{idx}"):
+            r.lset("race_results", idx, "WIPE"); r.lrem("race_results", 1, "WIPE"); st.rerun()
