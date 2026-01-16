@@ -2,8 +2,18 @@ import streamlit as st
 import json
 from helpers import get_redis
 
+# Page Config
+st.set_page_config(page_title="Member Management", layout="wide")
+
 r = get_redis()
-if not st.session_state.get('authenticated'): st.stop()
+
+# --- PERSISTENT URL-BASED AUTHENTICATION ---
+if st.query_params.get("access") == "granted":
+    st.session_state['authenticated'] = True
+
+if not st.session_state.get('authenticated'):
+    st.warning("Please login on the Home page to access this section.")
+    st.stop()
 
 st.header("👤 Member Management")
 
