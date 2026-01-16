@@ -3,10 +3,10 @@ import pandas as pd
 import json
 from helpers import get_redis, get_category
 
-st.set_page_config(page_title="AutoKudos Admin", layout="wide")
+st.set_page_config(page_title="BBPB-Admin", layout="wide")
 r = get_redis()
 
-# --- 1. AUTHENTICATION LOGIC ---
+# --- AUTHENTICATION PERSISTENCE ---
 if 'authenticated' not in st.session_state:
     st.session_state['authenticated'] = False
 
@@ -16,7 +16,6 @@ def local_get_logo():
 
 with st.sidebar:
     st.image(local_get_logo(), width=150)
-    
     if not st.session_state['authenticated']:
         admin_pwd = r.get("admin_password") or "admin123"
         pwd_input = st.text_input("Admin Password", type="password")
@@ -28,35 +27,37 @@ with st.sidebar:
         if st.button("Logout"):
             st.session_state['authenticated'] = False
             st.rerun()
-        
         st.divider()
         st.metric("Total PBs", r.llen("race_results"))
         st.metric("Pending PBs", r.llen("pending_results"))
 
-# --- 2. SIDEBAR LOCK ---
+# --- SIDEBAR PAGE HIDER ---
 if not st.session_state['authenticated']:
     st.markdown("<style>[data-testid='stSidebarNav'] ul li:nth-child(n+2) { display: none; }</style>", unsafe_allow_html=True)
     st.warning("Please enter password in sidebar to access management tools.")
 
-# --- 3. LEADERBOARD TABS ---
-st.title("🏃 Bramley Breezers Leaderboard")
-tabs = st.tabs(["🏆 PB Leaderboard", "🏅 Championship Standings"])
+st.title("🛡️ BBPB-Admin Dashboard")
 
-# ... (Rest of Leaderboard logic from previous Save Point remains same) ...
-with tabs[0]:
-    raw_res = r.lrange("race_results", 0, -1)
-    raw_mem = r.lrange("members", 0, -1)
-    members_data = [json.loads(m) for m in raw_mem]
-    active_names = [m['name'] for m in members_data if m.get('status', 'Active') == 'Active']
-    if raw_res:
-        df = pd.DataFrame([json.loads(res) for res in raw_res])
+raw_res = r.lrange("race_results", 0, -1)
+df = pd.DataFrame([json.loads(res) for res in raw_res]) if raw_res else pd.DataFrame()
+
+tabs = st.tabs(["🏆 PB Leaderboard", "🏅 Championship Standings", "🔍 Runner History Lookup"])
+
+with tabs[0]: # Leaderboard Match
+    if not df.empty:
         df['race_date_dt'] = pd.to_datetime(df['race_date'])
+        raw_mem = r.lrange("members", 0, -1)
+        members_data = [json.loads(m) for m in raw_mem]
+        active_names = [m['name'] for m in members_data if m.get('status', 'Active') == 'Active']
+        
         years = ["All-Time"] + sorted([str(y) for y in df['race_date_dt'].dt.year.unique()], reverse=True)
-        sel_year = st.selectbox("Select Season:", years)
+        sel_year = st.selectbox("Season:", years)
         disp_df = df.copy()
         if sel_year != "All-Time": disp_df = disp_df[disp_df['race_date_dt'].dt.year == int(sel_year)]
+        
         age_mode = r.get("age_mode") or "10Y"
         disp_df['Category'] = disp_df.apply(lambda x: get_category(x['dob'], x['race_date'], age_mode), axis=1)
+
         for d in ["5k", "10k", "10 Mile", "HM", "Marathon"]:
             st.markdown(f"### 🏁 {d}")
             m_col, f_col = st.columns(2)
@@ -71,7 +72,7 @@ with tabs[0]:
                             op = "1.0" if row['name'] in active_names else "0.5"
                             st.markdown(f'''<div style="border:2px solid #003366; border-top:none; padding:10px; background:white; margin-bottom:-2px; display:flex; justify-content:space-between; align-items:center; opacity:{op};"><div><span style="background:#FFD700; color:#003366; padding:2px 5px; border-radius:3px; font-weight:bold; font-size:0.75em; margin-right:5px;">{row['Category']}</span><b style="color:black;">{row['name']}</b><br><small style="color:#666;">{row['location']} • {row['race_date']}</small></div><div style="font-weight:bold; color:#003366;">{row['time_display']}</div></div>''', unsafe_allow_html=True)
 
-with tabs[1]:
+with tabs[1]: # Championship Standings
     final_raw = r.lrange("champ_results_final", 0, -1)
     if final_raw:
         c_df = pd.DataFrame([json.loads(x) for x in final_raw])
@@ -82,3 +83,10 @@ with tabs[1]:
         league = league.merge(counts, on='name')
         st.dataframe(league.sort_values('points', ascending=False), use_container_width=True, hide_index=True)
     else: st.info("No points approved yet.")
+
+with tabs[2]: # Runner History Lookup
+    if not df.empty:
+        search_n = st.selectbox("Select Runner to View PB History", [""] + sorted(df['name'].unique().tolist()))
+        if search_n:
+            st.subheader(f"History for {search_n}")
+            st.dataframe(df[df['name'] == search_n].sort_values('race_date', ascending=False), use_container_width=True, hide_index=True)
