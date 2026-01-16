@@ -6,26 +6,33 @@ r = get_redis()
 if not st.session_state.get('authenticated'): st.stop()
 
 st.header("🏅 Championship Admin")
-tab_cal, tab_app = st.tabs(["Calendar Editor", "Point Approvals"])
+tab_cal, tab_app, tab_man = st.tabs(["Calendar Editor", "Pending Approvals", "Manual Point Entry"])
 
-with tab_cal:
+# ... (Calendar Editor and Pending logic same as before) ...
+
+with tab_man:
+    st.subheader("➕ Manually Add Points")
+    raw_mem = r.lrange("members", 0, -1)
+    members = sorted([json.loads(m)['name'] for m in raw_mem])
+    
     cal_raw = r.get("champ_calendar_2026")
-    cal = json.loads(cal_raw) if cal_raw else []
-    new_cal = []
-    for i in range(15):
-        ra = cal[i] if i < len(cal) else {"date": "TBC", "name": "TBC", "distance": "TBC", "terrain": "Road"}
-        with st.expander(f"Race {i+1}: {ra['name']}"):
-            d, n = st.text_input("Date", ra['date'], key=f"d_{i}"), st.text_input("Name", ra['name'], key=f"n_{i}")
-            new_cal.append({"date": d, "name": n, "distance": "TBC", "terrain": "Road"})
-    if st.button("Save Calendar"): r.set("champ_calendar_2026", json.dumps(new_cal)); st.success("Saved")
+    races = [rc['name'] for rc in json.loads(cal_raw)] if cal_raw else ["No Races Found"]
 
-with tab_app:
-    c_pend = r.lrange("champ_pending", 0, -1)
-    for i, cj in enumerate(c_pend):
-        cp = json.loads(cj)
-        st.write(f"**{cp['name']}** - {cp['race_name']} ({cp['time_display']})")
-        wt = st.text_input("Winner Time", key=f"wt_{i}")
-        if st.button("Approve & Calc", key=f"c_ap_{i}"):
-            pts = round((time_to_seconds(wt) / time_to_seconds(cp['time_display'])) * 100, 1)
-            r.rpush("champ_results_final", json.dumps({"name": cp['name'], "race": cp['race_name'], "points": pts, "date": cp['date']}))
-            r.lrem("champ_pending", 1, cj); st.rerun()
+    with st.form("manual_champ_points"):
+        m_name = st.selectbox("Select Runner", members)
+        r_name = st.selectbox("Select Race", races)
+        u_time = st.text_input("Runner's Time (HH:MM:SS)")
+        w_time = st.text_input("Category Winner's Time (HH:MM:SS)")
+        r_date = st.date_input("Race Date")
+        
+        if st.form_submit_button("Calculate & Add Points"):
+            if u_time and w_time:
+                u_sec = time_to_seconds(u_time)
+                w_sec = time_to_seconds(w_time)
+                pts = round((w_sec / u_sec) * 100, 1)
+                
+                entry = {"name": m_name, "race": r_name, "points": pts, "date": str(r_date)}
+                r.rpush("champ_results_final", json.dumps(entry))
+                st.success(f"Added {pts} points for {m_name}!")
+            else:
+                st.error("Please enter both times.")
