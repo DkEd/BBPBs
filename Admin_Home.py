@@ -8,8 +8,7 @@ st.set_page_config(page_title="BBPB Admin - Home", layout="wide")
 
 r = get_redis()
 settings = get_club_settings()
-# Hardcoded as per your requirement
-age_mode = "Age on Day"
+age_mode = "Age on Day" # Hardcoded
 
 if settings.get('logo_url'):
     st.sidebar.image(settings['logo_url'], width=150)
@@ -36,10 +35,8 @@ raw_res = r.lrange("race_results", 0, -1)
 if raw_res:
     res_list = [json.loads(x) for x in raw_res]
     disp_df = pd.DataFrame(res_list)
-    
-    # The line that was causing the error:
+    # Correct call with 3 arguments to prevent TypeError
     disp_df['Category'] = disp_df.apply(lambda x: get_category(x['dob'], x['race_date'], age_mode), axis=1)
-    
     st.dataframe(disp_df[['name', 'distance', 'time_display', 'Category', 'location']], use_container_width=True)
 else:
     st.info("No results in database.")
