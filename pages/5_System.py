@@ -12,52 +12,51 @@ if not st.session_state.get('authenticated'):
     st.stop()
 
 st.header("⚙️ System Management")
-
-tabs = st.tabs(["Club Settings", "Bulk Upload", "Export & Backup"])
+tabs = st.tabs(["Club Settings", "Bulk Upload", "Backup & Export", "Cache Engine"])
 
 with tabs[0]:
-    st.subheader("General Settings")
     with st.form("settings_form"):
         new_mode = st.selectbox("Age Category Mode", ["5 Year", "10 Year"], 
                                index=0 if settings.get('age_mode') == "5 Year" else 1)
         new_logo = st.text_input("Logo URL", settings.get('logo_url', ''))
         new_pwd = st.text_input("Admin Password", settings.get('admin_password', 'admin'), type="password")
-        
         if st.form_submit_button("Save Settings"):
-            new_settings = {"age_mode": new_mode, "logo_url": new_logo, "admin_password": new_pwd}
-            r.set("club_settings", json.dumps(new_settings))
-            rebuild_leaderboard_cache(r) # Trigger refresh
-            st.success("Settings saved and cache updated!")
+            r.set("club_settings", json.dumps({"age_mode": new_mode, "logo_url": new_logo, "admin_password": new_pwd}))
+            st.success("Settings saved!")
 
-with tabs[1]:
-    st.subheader("Bulk Data Import")
-    data_type = st.selectbox("Import Type", ["Members", "Race Results", "Championship Results"])
-    uploaded_file = st.file_uploader(f"Choose {data_type} CSV", type="csv")
-    
-    if uploaded_file and st.button("🚀 Process Import"):
-        df = pd.read_csv(uploaded_file)
-        redis_key = {
-            "Members": "members",
-            "Race Results": "race_results",
-            "Championship Results": "champ_results_final"
-        }[data_type]
-        
+with tabs[1]: # Segmented Bulk Upload
+    st.subheader("Bulk Import")
+    target = st.radio("Target Database", ["Members", "Race Results", "Championship Results"], horizontal=True)
+    f = st.file_uploader(f"Upload {target} CSV", type="csv")
+    if f and st.button("🚀 Execute Import"):
+        df = pd.read_csv(f)
+        key = {"Members": "members", "Race Results": "race_results", "Championship Results": "champ_results_final"}[target]
         for _, row in df.iterrows():
-            r.rpush(redis_key, json.dumps(row.to_dict()))
-        
-        rebuild_leaderboard_cache(r)
-        st.success(f"Successfully imported {len(df)} records to {data_type}!")
+            r.rpush(key, json.dumps(row.to_dict()))
+        st.success(f"Imported {len(df)} records.")
 
-with tabs[2]:
-    st.subheader("Data Export")
-    # Export Members
+with tabs[2]: # Segmented Backup
+    st.subheader("Export Data")
+    col1, col2, col3 = st.columns(3)
+    
+    # Members
     m_raw = r.lrange("members", 0, -1)
     if m_raw:
-        m_df = pd.DataFrame([json.loads(x) for x in m_raw])
-        st.download_button("📥 Download Member List", m_df.to_csv(index=False), "members.csv", "text/csv")
+        col1.download_button("📥 Members CSV", pd.DataFrame([json.loads(x) for x in m_raw]).to_csv(index=False), "members.csv")
     
-    # Export Races
+    # Race Results
     r_raw = r.lrange("race_results", 0, -1)
     if r_raw:
-        r_df = pd.DataFrame([json.loads(x) for x in r_raw])
-        st.download_button("📥 Download All Race Results", r_df.to_csv(index=False), "all_races.csv", "text/csv")
+        col2.download_button("📥 Races CSV", pd.DataFrame([json.loads(x) for x in r_raw]).to_csv(index=False), "races.csv")
+        
+    # Championship
+    c_raw = r.lrange("champ_results_final", 0, -1)
+    if c_raw:
+        col3.download_button("📥 Champ CSV", pd.DataFrame([json.loads(x) for x in c_raw]).to_csv(index=False), "championship.csv")
+
+with tabs[3]: # Cache Engine
+    st.subheader("Manual Cache Override")
+    st.info("Use this if the leaderboards look out of sync.")
+    if st.button("🔄 Rebuild Global Cache"):
+        rebuild_leaderboard_cache(r)
+        st.success("All leaderboards recalculated and cached!")
