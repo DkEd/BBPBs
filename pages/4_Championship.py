@@ -1,31 +1,64 @@
-# ... (Inside tabs[2]: --- CHAMPIONSHIP LOG ---)
-        e_col, d_col = st.columns(2)
-        with e_col:
-            with st.expander("📝 Edit Result"):
-                idx = st.number_input("Index to Edit", 0, len(df)-1, 0, key="c_edit_idx")
-                t_to_edit = data[idx]
-                with st.form("c_edit_form"):
-                    new_pts = st.number_input("Points", 0.0, 100.0, float(t_to_edit.get('points', 0)))
-                    new_cat = st.text_input("Category", t_to_edit.get('category'))
-                    if st.form_submit_button("Save Changes"):
-                        t_to_edit['points'] = new_pts
-                        t_to_edit['category'] = new_cat
-                        r.lset("champ_results_final", int(idx), json.dumps(t_to_edit))
-                        
-                        # Logic Match: Auto-sync cache on edit
-                        rebuild_leaderboard_cache(r)
-                        
-                        st.success("Updated and Cache Rebuilt!")
-                        st.rerun()
-        with d_col:
-            with st.expander("🗑️ Delete Result"):
-                del_idx = st.number_input("Index to Delete", 0, len(df)-1, 0, key="c_del_idx")
-                if st.button("Confirm Deletion"):
-                    r.lset("champ_results_final", int(del_idx), "WIPE")
-                    r.lrem("champ_results_final", 1, "WIPE")
-                    
-                    # Logic Match: Auto-sync cache on delete
-                    rebuild_leaderboard_cache(r)
-                    
-                    st.success("Deleted and Cache Rebuilt!")
-                    st.rerun()
+import streamlit as st
+import json
+import os
+from helpers import get_redis, get_club_settings, rebuild_leaderboard_cache
+
+st.set_page_config(page_title="System Settings", layout="wide")
+
+r = get_redis()
+
+if not st.session_state.get('authenticated'):
+    st.warning("Please login on the Home page.")
+    st.stop()
+
+st.header("⚙️ System Settings")
+
+# --- CLUB SETTINGS SECTION ---
+st.subheader("Club Configuration")
+settings = get_club_settings()
+
+with st.form("settings_form"):
+    club_name = st.text_input("Club Name", settings.get('club_name', 'Bramley Breezers'))
+    logo_url = st.text_input("Logo URL", settings.get('logo_url', ''))
+    age_mode = st.selectbox("Age Category Logic", 
+                            ["Age on Day", "Age on Jan 1st"], 
+                            index=0 if settings.get('age_mode') == "Age on Day" else 1)
+    
+    if st.form_submit_button("Save Settings"):
+        new_settings = {
+            "club_name": club_name,
+            "logo_url": logo_url,
+            "age_mode": age_mode
+        }
+        r.set("club_settings", json.dumps(new_settings))
+        rebuild_leaderboard_cache(r)
+        st.success("Settings saved and cache updated!")
+        st.rerun()
+
+st.divider()
+
+# --- CACHE MANAGEMENT SECTION ---
+st.subheader("Data Synchronization")
+st.info("Use the button below to force a refresh of the public leaderboards and championship standings.")
+
+if st.button("🔄 Rebuild All Caches", use_container_width=True):
+    with st.spinner("Recalculating standings..."):
+        success = rebuild_leaderboard_cache(r)
+        if success:
+            st.success("Public cache rebuilt successfully! Both sites are now in sync.")
+        else:
+            st.error("Cache rebuild failed. Check database logs.")
+
+st.divider()
+
+# --- BACKUP / DANGER ZONE ---
+with st.expander("⚠️ Danger Zone"):
+    st.write("Current Database Keys:")
+    keys = r.keys("*")
+    st.json(keys)
+    
+    if st.button("Clear Pending Approvals"):
+        r.delete("pending_results")
+        r.delete("champ_pending")
+        st.warning("Pending queues cleared.")
+        st.rerun()
