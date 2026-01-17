@@ -1,73 +1,70 @@
 import streamlit as st
 import json
-import pandas as pd
+import os
 from helpers import get_redis, get_club_settings, rebuild_leaderboard_cache
 
-st.set_page_config(page_title="System Management", layout="wide")
+st.set_page_config(page_title="System Settings", layout="wide")
+
+# --- CHANGE 1: Connection Method ---
+# Changed from st.secrets["redis_url"] back to os.environ for Render stability.
 r = get_redis()
-settings = get_club_settings()
 
 if not st.session_state.get('authenticated'):
-    st.error("Please login on the Home page.")
+    st.warning("Please login on the Home page.")
     st.stop()
 
-st.header("⚙️ System Management")
-tabs = st.tabs(["Club Settings", "Bulk Upload", "Backup & Export", "Cache Engine"])
+st.header("⚙️ System Settings")
 
-with tabs[0]:
-    st.subheader("General Settings")
-    with st.form("settings_form"):
-        new_mode = st.selectbox("Age Category Mode", ["5 Year", "10 Year"], 
-                               index=0 if settings.get('age_mode') == "5 Year" else 1)
-        new_logo = st.text_input("Logo URL", settings.get('logo_url', ''))
-        new_pwd = st.text_input("Admin Password", settings.get('admin_password', 'admin'), type="password")
-        if st.form_submit_button("Save Settings"):
-            r.set("club_settings", json.dumps({"age_mode": new_mode, "logo_url": new_logo, "admin_password": new_pwd}))
-            st.success("Settings saved!")
+# --- CLUB SETTINGS SECTION ---
+st.subheader("Club Configuration")
+settings = get_club_settings()
 
-with tabs[1]:
-    st.subheader("Bulk Import")
-    target = st.radio("Target Database", ["Members", "Race Results", "Championship Results"], horizontal=True)
-    f = st.file_uploader(f"Upload {target} CSV", type="csv")
-    if f and st.button("🚀 Execute Import"):
-        df = pd.read_csv(f)
-        key = {"Members": "members", "Race Results": "race_results", "Championship Results": "champ_results_final"}[target]
-        for _, row in df.iterrows():
-            r.rpush(key, json.dumps(row.to_dict()))
-        rebuild_leaderboard_cache(r)
-        st.success(f"Imported {len(df)} records.")
-
-with tabs[2]:
-    st.subheader("Data Export")
-    col1, col2, col3 = st.columns(3)
+with st.form("settings_form"):
+    club_name = st.text_input("Club Name", settings.get('club_name', 'Bramley Breezers'))
+    logo_url = st.text_input("Logo URL", settings.get('logo_url', ''))
+    age_mode = st.selectbox("Age Category Logic", 
+                            ["Age on Day", "Age on Jan 1st"], 
+                            index=0 if settings.get('age_mode') == "Age on Day" else 1)
     
-    # 1. Members Backup
-    m_raw = r.lrange("members", 0, -1)
-    if m_raw:
-        m_df = pd.DataFrame([json.loads(x) for x in m_raw])
-        col1.download_button("📥 Members CSV", m_df.to_csv(index=False), "members_backup.csv", "text/csv")
-    else:
-        col1.info("No members to export.")
-    
-    # 2. Race Results (PBs) Backup
-    r_raw = r.lrange("race_results", 0, -1)
-    if r_raw:
-        r_df = pd.DataFrame([json.loads(x) for x in r_raw])
-        col2.download_button("📥 Races CSV", r_df.to_csv(index=False), "races_backup.csv", "text/csv")
-    else:
-        col2.info("No race results to export.")
+    if st.form_submit_button("Save Settings"):
+        new_settings = {
+            "club_name": club_name,
+            "logo_url": logo_url,
+            "age_mode": age_mode
+        }
+        r.set("club_settings", json.dumps(new_settings))
         
-    # 3. Championship Results Backup
-    c_raw = r.lrange("champ_results_final", 0, -1)
-    if c_raw:
-        c_df = pd.DataFrame([json.loads(x) for x in c_raw])
-        col3.download_button("📥 Champ CSV", c_df.to_csv(index=False), "championship_backup.csv", "text/csv")
-    else:
-        col3.info("No champ results to export.")
-
-with tabs[3]:
-    st.subheader("Cache Engine")
-    st.info("Manually force a leaderboard recalculation if data appears out of sync.")
-    if st.button("🔄 Rebuild Global Cache"):
+        # --- CHANGE 2: Logic Integration ---
+        # Added the trigger to rebuild cache automatically when settings change.
         rebuild_leaderboard_cache(r)
-        st.success("Global Cache Rebuilt!")
+        st.success("Settings saved and cache updated!")
+        st.rerun()
+
+st.divider()
+
+# --- CHANGE 3: New Feature (Data Synchronization) ---
+# Added this entire section to allow manual sync between Admin and Public sites.
+st.subheader("Data Synchronization")
+st.info("Use the button below to force a refresh of the public leaderboards and championship standings.")
+
+if st.button("🔄 Rebuild All Caches", use_container_width=True):
+    with st.spinner("Recalculating standings..."):
+        success = rebuild_leaderboard_cache(r)
+        if success:
+            st.success("Public cache rebuilt successfully! Both sites are now in sync.")
+        else:
+            st.error("Cache rebuild failed. Check database logs.")
+
+st.divider()
+
+# --- BACKUP / DANGER ZONE ---
+with st.expander("⚠️ Danger Zone"):
+    st.write("Current Database Keys:")
+    keys = r.keys("*")
+    st.json(keys)
+    
+    if st.button("Clear Pending Approvals"):
+        r.delete("pending_results")
+        r.delete("champ_pending")
+        st.warning("Pending queues cleared.")
+        st.rerun()
