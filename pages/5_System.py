@@ -4,9 +4,6 @@ import os
 from helpers import get_redis, get_club_settings, rebuild_leaderboard_cache
 
 st.set_page_config(page_title="System Settings", layout="wide")
-
-# --- CHANGE 1: Connection Method ---
-# Changed from st.secrets["redis_url"] back to os.environ for Render stability.
 r = get_redis()
 
 if not st.session_state.get('authenticated'):
@@ -15,35 +12,23 @@ if not st.session_state.get('authenticated'):
 
 st.header("⚙️ System Settings")
 
-# --- CLUB SETTINGS SECTION ---
 st.subheader("Club Configuration")
 settings = get_club_settings()
 
 with st.form("settings_form"):
     club_name = st.text_input("Club Name", settings.get('club_name', 'Bramley Breezers'))
     logo_url = st.text_input("Logo URL", settings.get('logo_url', ''))
-    age_mode = st.selectbox("Age Category Logic", 
-                            ["Age on Day", "Age on Jan 1st"], 
-                            index=0 if settings.get('age_mode') == "Age on Day" else 1)
+    age_mode = st.selectbox("Age Category Logic", ["Age on Day", "Age on Jan 1st"], index=0 if settings.get('age_mode') == "Age on Day" else 1)
     
     if st.form_submit_button("Save Settings"):
-        new_settings = {
-            "club_name": club_name,
-            "logo_url": logo_url,
-            "age_mode": age_mode
-        }
+        new_settings = {"club_name": club_name, "logo_url": logo_url, "age_mode": age_mode}
         r.set("club_settings", json.dumps(new_settings))
-        
-        # --- CHANGE 2: Logic Integration ---
-        # Added the trigger to rebuild cache automatically when settings change.
         rebuild_leaderboard_cache(r)
         st.success("Settings saved and cache updated!")
         st.rerun()
 
 st.divider()
 
-# --- CHANGE 3: New Feature (Data Synchronization) ---
-# Added this entire section to allow manual sync between Admin and Public sites.
 st.subheader("Data Synchronization")
 st.info("Use the button below to force a refresh of the public leaderboards and championship standings.")
 
@@ -57,14 +42,11 @@ if st.button("🔄 Rebuild All Caches", use_container_width=True):
 
 st.divider()
 
-# --- BACKUP / DANGER ZONE ---
 with st.expander("⚠️ Danger Zone"):
     st.write("Current Database Keys:")
     keys = r.keys("*")
     st.json(keys)
-    
     if st.button("Clear Pending Approvals"):
         r.delete("pending_results")
         r.delete("champ_pending")
-        st.warning("Pending queues cleared.")
-        st.rerun()
+        st.warning("Pending queues cleared."); st.rerun()
