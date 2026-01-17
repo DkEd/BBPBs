@@ -13,41 +13,27 @@ if not st.session_state.get('authenticated'):
 
 st.header("⚙️ System Settings")
 
-# --- CLUB SETTINGS ---
-st.subheader("Club Configuration")
-settings = get_club_settings()
+# Restoring the correct 4-tab structure
+tabs = st.tabs(["🔧 Configuration", "💾 Backup & Export", "📥 Bulk Upload", "🔄 Sync & Maintenance"])
 
-with st.form("settings_form"):
-    club_name = st.text_input("Club Name", settings.get('club_name', 'Bramley Breezers'))
-    logo_url = st.text_input("Logo URL", settings.get('logo_url', ''))
+with tabs[0]: # --- CONFIGURATION ---
+    st.subheader("Club Configuration")
+    settings = get_club_settings()
+    with st.form("settings_form"):
+        club_name = st.text_input("Club Name", settings.get('club_name', 'Bramley Breezers'))
+        logo_url = st.text_input("Logo URL", settings.get('logo_url', ''))
+        
+        if st.form_submit_button("Save Settings"):
+            new_settings = {"club_name": club_name, "logo_url": logo_url}
+            r.set("club_settings", json.dumps(new_settings))
+            rebuild_leaderboard_cache(r)
+            st.success("Settings saved!")
+            st.rerun()
+
+with tabs[1]: # --- BACKUP & EXPORT ---
+    st.subheader("Database Portability")
+    st.write("Export your entire database as a JSON file for a full system restore.")
     
-    if st.form_submit_button("Save Settings"):
-        new_settings = {"club_name": club_name, "logo_url": logo_url}
-        r.set("club_settings", json.dumps(new_settings))
-        rebuild_leaderboard_cache(r)
-        st.success("Settings saved and cache updated!")
-        st.rerun()
-
-st.divider()
-
-# --- CACHE MANAGEMENT ---
-st.subheader("Data Synchronization")
-st.info("Force a refresh of the public leaderboards and championship standings.")
-if st.button("🔄 Rebuild All Caches", use_container_width=True):
-    with st.spinner("Recalculating standings..."):
-        if rebuild_leaderboard_cache(r):
-            st.success("Public cache rebuilt successfully!")
-        else:
-            st.error("Cache rebuild failed.")
-
-st.divider()
-
-# --- BACKUP & EXPORT ---
-st.subheader("💾 Backup & Data Export")
-col_exp, col_imp = st.columns(2)
-
-with col_exp:
-    st.write("**Export Database**")
     db_export = {
         "members": [json.loads(m) for m in r.lrange("members", 0, -1)],
         "race_results": [json.loads(res) for res in r.lrange("race_results", 0, -1)],
@@ -60,62 +46,83 @@ with col_exp:
         label="📥 Download JSON Backup",
         data=json_str,
         file_name=f"bbpb_backup_{pd.Timestamp.now().strftime('%Y%m%d')}.json",
-        mime="application/json",
-        use_container_width=True
+        mime="application/json"
     )
 
-with col_imp:
-    st.write("**Restore / Import**")
-    uploaded_file = st.file_uploader("Upload JSON Backup", type="json")
-    if uploaded_file is not None:
-        if st.button("⚠️ Confirm Restore", use_container_width=True):
-            data = json.load(uploaded_file)
-            # Members
+    st.divider()
+    st.write("**Restore from JSON**")
+    uploaded_json = st.file_uploader("Upload JSON Backup File", type="json")
+    if uploaded_json is not None:
+        if st.button("⚠️ Confirm Full Restore"):
+            data = json.load(uploaded_json)
             r.delete("members")
             for m in data.get("members", []): r.rpush("members", json.dumps(m))
-            # Results
             r.delete("race_results")
             for res in data.get("race_results", []): r.rpush("race_results", json.dumps(res))
-            # Champ
             r.delete("champ_results_final")
             for c in data.get("champ_results_final", []): r.rpush("champ_results_final", json.dumps(c))
-            # Calendar
             r.set("champ_calendar_2026", json.dumps(data.get("champ_calendar", [])))
-            
             rebuild_leaderboard_cache(r)
-            st.success("Database restored successfully!")
+            st.success("System Restored.")
             st.rerun()
 
-st.divider()
+with tabs[2]: # --- BULK UPLOAD ---
+    st.subheader("CSV Data Import")
+    st.info("Upload CSV files to append data to the database. Ensure columns match the expected format.")
+    
+    # 1. Bulk Members
+    with st.expander("Import Members (CSV)"):
+        st.caption("Required Columns: name, dob, gender, status")
+        up_m = st.file_uploader("Choose Members CSV", type="csv", key="up_m")
+        if up_m and st.button("Upload Members"):
+            df_m = pd.read_csv(up_m)
+            for _, row in df_m.iterrows():
+                m_data = {"name": str(row['name']), "dob": str(row['dob']), "gender": str(row['gender']), "status": str(row['status'])}
+                r.rpush("members", json.dumps(m_data))
+            st.success(f"Added {len(df_m)} members.")
 
-# --- MEMBER STATUS TOGGLES ---
-st.subheader("🏃 Member Status Toggles")
-st.write("Quickly toggle members between Active (1.0 opacity) and Inactive (0.5 opacity).")
-members_raw = r.lrange("members", 0, -1)
-if members_raw:
-    for i, m_json in enumerate(members_raw):
-        m = json.loads(m_json)
-        c1, c2, c3 = st.columns([3, 2, 2])
-        c1.write(f"**{m['name']}**")
-        current_status = m.get('status', 'Active')
-        c2.write(f"Current: {current_status}")
-        
-        new_label = "Set Inactive" if current_status == "Active" else "Set Active"
-        if c3.button(new_label, key=f"tog_{i}"):
-            m['status'] = "Inactive" if current_status == "Active" else "Active"
-            r.lset("members", i, json.dumps(m))
+    # 2. Bulk Race Results (PBs)
+    with st.expander("Import Race Results / PBs (CSV)"):
+        st.caption("Required Columns: name, distance, location, race_date, time_display, time_seconds, gender, dob")
+        up_r = st.file_uploader("Choose Results CSV", type="csv", key="up_r")
+        if up_r and st.button("Upload Results"):
+            df_r = pd.read_csv(up_r)
+            for _, row in df_r.iterrows():
+                r_data = {
+                    "name": str(row['name']), "distance": str(row['distance']), "location": str(row['location']),
+                    "race_date": str(row['race_date']), "time_display": str(row['time_display']),
+                    "time_seconds": int(row['time_seconds']), "gender": str(row['gender']), "dob": str(row['dob'])
+                }
+                r.rpush("race_results", json.dumps(r_data))
             rebuild_leaderboard_cache(r)
-            st.rerun()
-else:
-    st.info("No members found.")
+            st.success(f"Added {len(df_r)} race results.")
 
-st.divider()
+    # 3. Bulk Championship Results
+    with st.expander("Import Championship Results (CSV)"):
+        st.caption("Required Columns: name, race_name, date, points, category, gender")
+        up_c = st.file_uploader("Choose Champ CSV", type="csv", key="up_c")
+        if up_c and st.button("Upload Champ Results"):
+            df_c = pd.read_csv(up_c)
+            for _, row in df_c.iterrows():
+                c_data = {
+                    "name": str(row['name']), "race_name": str(row['race_name']), "date": str(row['date']),
+                    "points": float(row['points']), "category": str(row['category']), "gender": str(row['gender'])
+                }
+                r.rpush("champ_results_final", json.dumps(c_data))
+            rebuild_leaderboard_cache(r)
+            st.success(f"Added {len(df_c)} championship entries.")
 
-with st.expander("⚠️ Danger Zone"):
-    st.write("Current Database Keys:")
-    st.json(r.keys("*"))
-    if st.button("Clear All Pending Queues"):
-        r.delete("pending_results")
-        r.delete("champ_pending")
-        st.warning("Pending queues cleared.")
-        st.rerun()
+with tabs[3]: # --- SYNC & MAINTENANCE ---
+    st.subheader("Maintenance Tools")
+    if st.button("🔄 Force Rebuild Leaderboard Caches", use_container_width=True):
+        if rebuild_leaderboard_cache(r):
+            st.success("Cache refreshed.")
+        else:
+            st.error("Refresh failed.")
+
+    st.divider()
+    with st.expander("🗑️ Danger Zone"):
+        if st.button("Clear Pending Approval Queues"):
+            r.delete("pending_results")
+            r.delete("champ_pending")
+            st.warning("Pending queues cleared.")
