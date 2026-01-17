@@ -2,11 +2,22 @@ import redis
 import streamlit as st
 import json
 import pandas as pd
+import os
 from datetime import datetime
 
 @st.cache_resource
 def get_redis():
-    return redis.from_url(st.secrets["REDIS_URL"], decode_responses=True)
+    # Try Streamlit secrets first, then fall back to standard Environment Variables
+    try:
+        url = st.secrets.get("REDIS_URL") or os.environ.get("REDIS_URL")
+    except:
+        url = os.environ.get("REDIS_URL")
+        
+    if not url:
+        st.error("REDIS_URL not found in Secrets or Environment Variables.")
+        st.stop()
+        
+    return redis.from_url(url, decode_responses=True)
 
 def get_club_settings():
     r = get_redis()
@@ -25,18 +36,17 @@ def get_category(dob_str, race_date_str, mode):
     except: return "Senior"
 
 def rebuild_leaderboard_cache(r):
+    # This remains the same as the previous version
     settings = get_club_settings()
     
-    # --- 1. PB LEADERBOARD CACHE ---
+    # 1. PB LEADERBOARD CACHE
     raw_res = r.lrange("race_results", 0, -1)
     if raw_res:
         df = pd.DataFrame([json.loads(x) for x in raw_res])
-        # Logic to find fastest per person/distance/category
         df = df.sort_values("time_seconds", ascending=True)
-        # We store the simplified PB set for the public BBPB.py to read
         r.set("cached_pb_leaderboard", df.to_json(orient="records"))
     
-    # --- 2. CHAMPIONSHIP CACHE ---
+    # 2. CHAMPIONSHIP CACHE
     final_raw = r.lrange("champ_results_final", 0, -1)
     if final_raw:
         c_df = pd.DataFrame([json.loads(x) for x in final_raw])
