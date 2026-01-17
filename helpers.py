@@ -11,26 +11,21 @@ def get_redis():
     return redis.from_url(redis_url, decode_responses=True)
 
 def get_club_settings():
-    """Retrieve club-wide settings; returns defaults if not set."""
+    """Retrieve club-wide settings."""
     r = get_redis()
     s = r.get("club_settings")
     if s:
         return json.loads(s)
     return {
         "club_name": "Bramley Breezers",
-        "age_mode": "Age on Day",
         "logo_url": ""
     }
 
-def get_category(dob_str, race_date_str, age_mode):
-    """Calculate age category (e.g., SEN, V40) based on club settings."""
+def get_category(dob_str, race_date_str):
+    """Calculate age category (Always Age on Day)."""
     try:
         dob = datetime.strptime(dob_str, '%Y-%m-%d')
-        if age_mode == "Age on Day":
-            ref_date = datetime.strptime(race_date_str, '%Y-%m-%d')
-        else:
-            ref_date = datetime(datetime.strptime(race_date_str, '%Y-%m-%d').year, 1, 1)
-        
+        ref_date = datetime.strptime(race_date_str, '%Y-%m-%d')
         age = ref_date.year - dob.year - ((ref_date.month, ref_date.day) < (dob.month, dob.day))
         
         if age < 40: return "SEN"
