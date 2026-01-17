@@ -15,6 +15,7 @@ st.header("⚙️ System Management")
 tabs = st.tabs(["Club Settings", "Bulk Upload", "Backup & Export", "Cache Engine"])
 
 with tabs[0]:
+    st.subheader("General Settings")
     with st.form("settings_form"):
         new_mode = st.selectbox("Age Category Mode", ["5 Year", "10 Year"], 
                                index=0 if settings.get('age_mode') == "5 Year" else 1)
@@ -24,7 +25,7 @@ with tabs[0]:
             r.set("club_settings", json.dumps({"age_mode": new_mode, "logo_url": new_logo, "admin_password": new_pwd}))
             st.success("Settings saved!")
 
-with tabs[1]: # Segmented Bulk Upload
+with tabs[1]:
     st.subheader("Bulk Import")
     target = st.radio("Target Database", ["Members", "Race Results", "Championship Results"], horizontal=True)
     f = st.file_uploader(f"Upload {target} CSV", type="csv")
@@ -33,30 +34,40 @@ with tabs[1]: # Segmented Bulk Upload
         key = {"Members": "members", "Race Results": "race_results", "Championship Results": "champ_results_final"}[target]
         for _, row in df.iterrows():
             r.rpush(key, json.dumps(row.to_dict()))
+        rebuild_leaderboard_cache(r)
         st.success(f"Imported {len(df)} records.")
 
-with tabs[2]: # Segmented Backup
-    st.subheader("Export Data")
+with tabs[2]:
+    st.subheader("Data Export")
     col1, col2, col3 = st.columns(3)
     
-    # Members
+    # 1. Members Backup
     m_raw = r.lrange("members", 0, -1)
     if m_raw:
-        col1.download_button("📥 Members CSV", pd.DataFrame([json.loads(x) for x in m_raw]).to_csv(index=False), "members.csv")
+        m_df = pd.DataFrame([json.loads(x) for x in m_raw])
+        col1.download_button("📥 Members CSV", m_df.to_csv(index=False), "members_backup.csv", "text/csv")
+    else:
+        col1.info("No members to export.")
     
-    # Race Results
+    # 2. Race Results (PBs) Backup
     r_raw = r.lrange("race_results", 0, -1)
     if r_raw:
-        col2.download_button("📥 Races CSV", pd.DataFrame([json.loads(x) for x in r_raw]).to_csv(index=False), "races.csv")
+        r_df = pd.DataFrame([json.loads(x) for x in r_raw])
+        col2.download_button("📥 Races CSV", r_df.to_csv(index=False), "races_backup.csv", "text/csv")
+    else:
+        col2.info("No race results to export.")
         
-    # Championship
+    # 3. Championship Results Backup
     c_raw = r.lrange("champ_results_final", 0, -1)
     if c_raw:
-        col3.download_button("📥 Champ CSV", pd.DataFrame([json.loads(x) for x in c_raw]).to_csv(index=False), "championship.csv")
+        c_df = pd.DataFrame([json.loads(x) for x in c_raw])
+        col3.download_button("📥 Champ CSV", c_df.to_csv(index=False), "championship_backup.csv", "text/csv")
+    else:
+        col3.info("No champ results to export.")
 
-with tabs[3]: # Cache Engine
-    st.subheader("Manual Cache Override")
-    st.info("Use this if the leaderboards look out of sync.")
+with tabs[3]:
+    st.subheader("Cache Engine")
+    st.info("Manually force a leaderboard recalculation if data appears out of sync.")
     if st.button("🔄 Rebuild Global Cache"):
         rebuild_leaderboard_cache(r)
-        st.success("All leaderboards recalculated and cached!")
+        st.success("Global Cache Rebuilt!")
