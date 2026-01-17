@@ -18,10 +18,13 @@ settings = get_club_settings()
 with st.form("settings_form"):
     club_name = st.text_input("Club Name", settings.get('club_name', 'Bramley Breezers'))
     logo_url = st.text_input("Logo URL", settings.get('logo_url', ''))
-    age_mode = st.selectbox("Age Category Logic", ["Age on Day", "Age on Jan 1st"], index=0 if settings.get('age_mode') == "Age on Day" else 1)
     
     if st.form_submit_button("Save Settings"):
-        new_settings = {"club_name": club_name, "logo_url": logo_url, "age_mode": age_mode}
+        # Age mode removed from form - strictly Age on Day
+        new_settings = {
+            "club_name": club_name,
+            "logo_url": logo_url
+        }
         r.set("club_settings", json.dumps(new_settings))
         rebuild_leaderboard_cache(r)
         st.success("Settings saved and cache updated!")
