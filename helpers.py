@@ -1,51 +1,48 @@
-import streamlit as st
 import redis
+import streamlit as st
 import json
-import os
+import pandas as pd
 from datetime import datetime
 
+@st.cache_resource
 def get_redis():
-    return redis.from_url(os.environ.get("REDIS_URL"), decode_responses=True)
+    return redis.from_url(st.secrets["REDIS_URL"], decode_responses=True)
 
 def get_club_settings():
     r = get_redis()
-    return {
-        "age_mode": r.get("age_mode") or "10Y",
-        "logo_url": r.get("club_logo_url") or "",  # Fixed key name here
-        "admin_password": r.get("admin_password") or "admin123",
-        "show_champ_tab": r.get("show_champ_tab") or "False"
-    }
+    s = r.get("club_settings")
+    return json.loads(s) if s else {"age_mode": "5 Year", "logo_url": "", "admin_password": "admin"}
 
-def format_time_string(t_str):
+def get_category(dob_str, race_date_str, mode):
     try:
-        parts = str(t_str).strip().split(':')
-        if len(parts) == 2: 
-            return f"00:{parts[0].zfill(2)}:{parts[1].zfill(2)}"
-        elif len(parts) == 3: 
-            return f"{parts[0].zfill(2)}:{parts[1].zfill(2)}:{parts[2].zfill(2)}"
-        return str(t_str)
-    except: 
-        return str(t_str)
+        dob = datetime.strptime(dob_str, '%Y-%m-%d')
+        rd = datetime.strptime(race_date_str, '%Y-%m-%d')
+        age = rd.year - dob.year - ((rd.month, rd.day) < (dob.month, dob.day))
+        step = 5 if mode == "5 Year" else 10
+        if age < 35: return "Senior"
+        cat_base = (age // step) * step
+        return f"V{cat_base}"
+    except: return "Senior"
 
-def time_to_seconds(t_str):
-    try:
-        parts = list(map(int, str(t_str).split(':')))
-        if len(parts) == 3: 
-            return parts[0] * 3600 + parts[1] * 60 + parts[2]
-        if len(parts) == 2: 
-            return parts[0] * 60 + parts[1]
-        return 999999
-    except: 
-        return 999999
-
-def get_category(dob_str, race_date_str, mode="10Y"):
-    try:
-        dob = datetime.strptime(str(dob_str), '%Y-%m-%d')
-        race_date = datetime.strptime(str(race_date_str), '%Y-%m-%d')
-        age = race_date.year - dob.year - ((race_date.month, race_date.day) < (dob.month, dob.day))
-        step = 5 if mode == "5Y" else 10
-        if age < (35 if mode == "5Y" else 40): 
-            return "Senior"
-        return f"V{(age // step) * step}"
-    except: 
-        return "Unknown"
+def rebuild_leaderboard_cache(r):
+    settings = get_club_settings()
+    
+    # --- 1. PB LEADERBOARD CACHE ---
+    raw_res = r.lrange("race_results", 0, -1)
+    if raw_res:
+        df = pd.DataFrame([json.loads(x) for x in raw_res])
+        # Logic to find fastest per person/distance/category
+        df = df.sort_values("time_seconds", ascending=True)
+        # We store the simplified PB set for the public BBPB.py to read
+        r.set("cached_pb_leaderboard", df.to_json(orient="records"))
+    
+    # --- 2. CHAMPIONSHIP CACHE ---
+    final_raw = r.lrange("champ_results_final", 0, -1)
+    if final_raw:
+        c_df = pd.DataFrame([json.loads(x) for x in final_raw])
+        c_df = c_df.sort_values(['name', 'points'], ascending=[True, False])
+        c_df['rank'] = c_df.groupby('name').cumcount() + 1
+        league = c_df[c_df['rank'] <= 6].groupby('name')['points'].sum().reset_index()
+        league.columns = ['Runner', 'Total Points']
+        league = league.sort_values('Total Points', ascending=False).reset_index(drop=True)
+        r.set("cached_champ_standings", league.to_json(orient="records"))
