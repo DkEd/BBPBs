@@ -21,11 +21,14 @@ def get_club_settings():
         "logo_url": ""
     }
 
-def get_category(dob_str, race_date_str):
-    """Calculate age category (Always Age on Day)."""
+def get_category(dob_str, race_date_str, age_mode="Age on Day"):
+    """
+    Calculate age category. 
+    Accepts age_mode to prevent TypeErrors, but logic remains 'Age on Day'.
+    """
     try:
-        dob = datetime.strptime(dob_str, '%Y-%m-%d')
-        ref_date = datetime.strptime(race_date_str, '%Y-%m-%d')
+        dob = datetime.strptime(str(dob_str), '%Y-%m-%d')
+        ref_date = datetime.strptime(str(race_date_str), '%Y-%m-%d')
         age = ref_date.year - dob.year - ((ref_date.month, ref_date.day) < (dob.month, dob.day))
         
         if age < 40: return "SEN"
