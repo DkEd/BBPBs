@@ -52,6 +52,7 @@ with tabs[0]: # --- PENDING APPROVALS ---
                 win_time = col1.text_input(f"Winner's Time (00:00:00)", "00:00:00", key=f"win_{i}")
                 runner_sec = get_seconds(p['time_display'])
                 winner_sec = get_seconds(win_time)
+                # MATCH SCORE CALCULATION
                 calc_pts = round((winner_sec / runner_sec) * 100, 2) if winner_sec > 0 else 0.0
                 pts = col2.number_input("Final Points to Award", 0.0, 100.0, calc_pts, key=f"pts_{i}")
                 st.caption(f"Calculated based on winner: {calc_pts}")
@@ -67,7 +68,7 @@ with tabs[0]: # --- PENDING APPROVALS ---
                 if st.button("✅ Approve Result", key=f"app_{i}"):
                     m_info = member_db.get(p['name'], {})
                     final_date = p.get('date') if is_race_15 else champ_calendar[race_idx]['date']
-                    cat = get_category(m_info.get('dob','2000-01-01'), final_date, settings['age_mode'])
+                    cat = get_category(m_info.get('dob','2000-01-01'), final_date, settings.get('age_mode', 'Age on Day'))
                     
                     champ_entry = {"name": p['name'], "race_name": p['race_name'], "date": final_date, "points": pts, "category": cat, "gender": m_info.get('gender', 'U')}
                     r.rpush("champ_results_final", json.dumps(champ_entry))
