@@ -22,7 +22,6 @@ with tabs[0]: # --- CONFIGURATION ---
     with st.form("settings_form"):
         club_name = st.text_input("Club Name", settings.get('club_name', 'Bramley Breezers'))
         logo_url = st.text_input("Logo URL", settings.get('logo_url', ''))
-        
         if st.form_submit_button("Save Settings"):
             new_settings = {"club_name": club_name, "logo_url": logo_url}
             r.set("club_settings", json.dumps(new_settings))
@@ -33,7 +32,6 @@ with tabs[0]: # --- CONFIGURATION ---
 with tabs[1]: # --- BACKUP & EXPORT ---
     st.subheader("Database Portability")
     st.write("Export your entire database as a JSON file for a full system restore.")
-    
     db_export = {
         "members": [json.loads(m) for m in r.lrange("members", 0, -1)],
         "race_results": [json.loads(res) for res in r.lrange("race_results", 0, -1)],
@@ -70,7 +68,6 @@ with tabs[2]: # --- BULK UPLOAD ---
     st.subheader("CSV Data Import")
     st.info("Upload CSV files to append data to the database. Ensure columns match the expected format.")
     
-    # 1. Bulk Members
     with st.expander("Import Members (CSV)"):
         st.caption("Required Columns: name, dob, gender, status")
         up_m = st.file_uploader("Choose Members CSV", type="csv", key="up_m")
@@ -81,7 +78,6 @@ with tabs[2]: # --- BULK UPLOAD ---
                 r.rpush("members", json.dumps(m_data))
             st.success(f"Added {len(df_m)} members.")
 
-    # 2. Bulk Race Results (PBs)
     with st.expander("Import Race Results / PBs (CSV)"):
         st.caption("Required Columns: name, distance, location, race_date, time_display, time_seconds, gender, dob")
         up_r = st.file_uploader("Choose Results CSV", type="csv", key="up_r")
@@ -97,7 +93,6 @@ with tabs[2]: # --- BULK UPLOAD ---
             rebuild_leaderboard_cache(r)
             st.success(f"Added {len(df_r)} race results.")
 
-    # 3. Bulk Championship Results
     with st.expander("Import Championship Results (CSV)"):
         st.caption("Required Columns: name, race_name, date, points, category, gender")
         up_c = st.file_uploader("Choose Champ CSV", type="csv", key="up_c")
@@ -119,7 +114,6 @@ with tabs[3]: # --- SYNC & MAINTENANCE ---
             st.success("Cache refreshed.")
         else:
             st.error("Refresh failed.")
-
     st.divider()
     with st.expander("🗑️ Danger Zone"):
         if st.button("Clear Pending Approval Queues"):
