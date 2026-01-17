@@ -46,16 +46,13 @@ with tabs[0]: # --- PENDING APPROVALS ---
                     st.error("Setup the calendar in the next tab first.")
                     continue
 
-                # 1. Select which Calendar Race this belongs to
                 race_options = [f"Race {idx+1}: {rc.get('name')}" for idx, rc in enumerate(champ_calendar)]
                 sel_race_str = st.selectbox("Assign to Calendar Race", race_options, key=f"conf_race_{i}")
                 race_idx = race_options.index(sel_race_str)
                 is_race_15 = (race_idx == 14)
 
                 col1, col2 = st.columns(2)
-                
-                # 2. Points Calculation using Winner's Time
-                win_time = col1.text_input(f"Winner's Time (MM:SS or HH:MM:SS)", "00:00", key=f"win_{i}")
+                win_time = col1.text_input(f"Winner's Time (00:00:00)", "00:00:00", key=f"win_{i}")
                 runner_sec = get_seconds(p['time_display'])
                 winner_sec = get_seconds(win_time)
                 calc_pts = round((winner_sec / runner_sec) * 100, 2) if winner_sec > 0 else 0.0
@@ -63,7 +60,6 @@ with tabs[0]: # --- PENDING APPROVALS ---
                 pts = col2.number_input("Final Points to Award", 0.0, 100.0, calc_pts, key=f"pts_{i}")
                 st.caption(f"Calculated based on winner: {calc_pts}")
 
-                # 3. PB Leaderboard Assignment
                 st.markdown("---")
                 log_pb = st.checkbox("Also add to Main PB Leaderboard?", value=True, key=f"log_pb_{i}")
                 
@@ -75,11 +71,9 @@ with tabs[0]: # --- PENDING APPROVALS ---
 
                 if st.button("✅ Approve Result", key=f"app_{i}"):
                     m_info = member_db.get(p['name'], {})
-                    # Logic: Use Calendar date for 1-14, User's submitted date for Race 15
                     final_date = p.get('date') if is_race_15 else champ_calendar[race_idx]['date']
                     cat = get_category(m_info.get('dob','2000-01-01'), final_date, settings['age_mode'])
                     
-                    # Entry for Championship Log
                     champ_entry = {
                         "name": p['name'], 
                         "race_name": p['race_name'], 
@@ -90,7 +84,6 @@ with tabs[0]: # --- PENDING APPROVALS ---
                     }
                     r.rpush("champ_results_final", json.dumps(champ_entry))
                     
-                    # Entry for PB Leaderboard
                     if log_pb:
                         pb_entry = {
                             "name": p['name'], 
@@ -113,26 +106,48 @@ with tabs[0]: # --- PENDING APPROVALS ---
 with tabs[1]: # --- CALENDAR SETUP ---
     st.subheader("15-Race Calendar Setup")
     if len(champ_calendar) < 15:
-        champ_calendar = [{"name": "TBC", "date": "2026-01-01", "distance": "TBC", "terrain": "Road"} for _ in range(15)]
+        champ_calendar = [{"name": "TBC", "date": "TBC", "distance": "TBC", "terrain": "Road"} for _ in range(15)]
     
     with st.form("cal_form"):
         updated_cal = []
         for i in range(15):
-            c1, c2, c3, c4 = st.columns([3, 2, 2, 2])
+            st.markdown(f"**Race {i+1}**")
+            c1, c2, c3, c4, c5 = st.columns([3, 2, 2, 2, 1])
+            
+            # Race Name
             default_name = "Any Marathon (Power of 10)" if i == 14 else champ_calendar[i]['name']
-            n = c1.text_input(f"Race {i+1}", default_name, key=f"n_{i}")
+            n = c1.text_input("Name", default_name, key=f"n_{i}", label_visibility="collapsed")
             
-            try: d_val = datetime.strptime(champ_calendar[i]['date'], '%Y-%m-%d')
-            except: d_val = datetime(2026, 1, 1)
+            if i < 14:
+                # TBC Checkbox for Races 1-14
+                is_tbc = c5.checkbox("TBC", value=(champ_calendar[i].get('date') == "TBC"), key=f"tbc_{i}")
+                
+                if is_tbc:
+                    d, di, te = "TBC", "TBC", "TBC"
+                    c2.info("Date: TBC")
+                    c3.info("Dist: TBC")
+                    c4.info("Terrain: TBC")
+                else:
+                    try: d_val = datetime.strptime(champ_calendar[i]['date'], '%Y-%m-%d')
+                    except: d_val = datetime(2026, 1, 1)
+                    d = c2.date_input("Date", d_val, key=f"d_{i}", label_visibility="collapsed")
+                    di = c3.selectbox("Dist", ["5k", "10k", "10 Mile", "HM", "Marathon"], 
+                                      index=["5k", "10k", "10 Mile", "HM", "Marathon"].index(champ_calendar[i].get('distance', '5k')) if champ_calendar[i].get('distance') != "TBC" else 0,
+                                      key=f"di_{i}", label_visibility="collapsed")
+                    te = c4.selectbox("Terrain", ["Road", "Trail", "Fell", "XC"], 
+                                      index=["Road", "Trail", "Fell", "XC"].index(champ_calendar[i].get('terrain', 'Road')) if champ_calendar[i].get('terrain') != "TBC" else 0,
+                                      key=f"te_{i}", label_visibility="collapsed")
+            else:
+                # Race 15: Fixed logic
+                d = "Any 2026 Marathon"
+                di = "Marathon"
+                te = "Road"
+                c2.write(d)
+                c3.write(di)
+                c4.write(te)
             
-            d = c2.date_input("Date", d_val, key=f"d_{i}")
-            di = c3.selectbox("Dist", ["5k", "10k", "10 Mile", "HM", "Marathon", "TBC"], 
-                              index=["5k", "10k", "10 Mile", "HM", "Marathon", "TBC"].index(champ_calendar[i].get('distance', 'TBC')),
-                              key=f"di_{i}")
-            te = c4.selectbox("Terrain", ["Road", "Trail", "Fell", "XC"], 
-                              index=["Road", "Trail", "Fell", "XC"].index(champ_calendar[i].get('terrain', 'Road')),
-                              key=f"te_{i}")
             updated_cal.append({"name": n, "date": str(d), "distance": di, "terrain": te})
+            st.divider()
             
         if st.form_submit_button("Save Calendar"):
             r.set("champ_calendar_2026", json.dumps(updated_cal))
@@ -180,4 +195,4 @@ with tabs[3]: # --- LEADERBOARD ---
     if cache:
         st.table(pd.read_json(cache))
     else:
-        st.info("Standings not yet generated. Approve a result or rebuild cache to view.")
+        st.info("Standings not yet generated.")
