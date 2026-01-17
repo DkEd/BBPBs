@@ -24,7 +24,8 @@ def get_club_settings():
 def get_category(dob_str, race_date_str, age_mode="Age on Day"):
     """
     Calculate age category. 
-    Accepts age_mode to prevent TypeErrors, but logic remains 'Age on Day'.
+    Accepts optional 'age_mode' to prevent Admin site TypeErrors, 
+    but logic is strictly 'Age on Day' as requested.
     """
     try:
         dob = datetime.strptime(str(dob_str), '%Y-%m-%d')
@@ -44,21 +45,35 @@ def get_category(dob_str, race_date_str, age_mode="Age on Day"):
 
 def rebuild_leaderboard_cache(r):
     """Calculates and caches the PB Leaderboard and Championship Standings."""
+    # 1. PB LEADERBOARD CACHE
     raw_res = r.lrange("race_results", 0, -1)
     if raw_res:
         df = pd.DataFrame([json.loads(res) for res in raw_res])
         r.set("cached_pb_leaderboard", df.to_json())
     
+    # 2. CHAMPIONSHIP STANDINGS CACHE
     champ_raw = r.lrange("champ_results_final", 0, -1)
     if champ_raw:
         c_df = pd.DataFrame([json.loads(x) for x in champ_raw])
         c_df = c_df.sort_values(['name', 'points'], ascending=[True, False])
+        
+        # Take top 6 results
         top_6 = c_df.groupby('name').head(6)
-        standings = top_6.groupby('name').agg({'points': 'sum', 'race_name': 'count'}).reset_index()
+        
+        standings = top_6.groupby('name').agg({
+            'points': 'sum',
+            'race_name': 'count'
+        }).reset_index()
+        
         standings.columns = ['Name', 'Total Points', 'Races Run']
+        
+        # Merge back category and gender (latest)
         latest_info = c_df.drop_duplicates('name', keep='first')[['name', 'category', 'gender']]
         standings = standings.merge(latest_info, left_on='Name', right_on='name').drop('name', axis=1)
+        
         standings = standings[['Name', 'category', 'gender', 'Races Run', 'Total Points']]
         standings = standings.sort_values('Total Points', ascending=False)
+        
         r.set("cached_champ_standings", standings.to_json())
+    
     return True
