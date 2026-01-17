@@ -1,36 +1,48 @@
 import streamlit as st
 import pandas as pd
-from helpers import get_redis, get_club_settings
+import json
+from helpers import get_redis, get_club_settings, rebuild_leaderboard_cache
 
-st.set_page_config(page_title="BBPB Admin", layout="wide")
+st.set_page_config(page_title="BBPB - Admin", layout="wide")
 r = get_redis()
 settings = get_club_settings()
 
-st.title("🛡️ Admin Dashboard")
-
+# --- SIDEBAR LOGIN (Restored) ---
+st.sidebar.title("🔐 Admin Access")
 if not st.session_state.get('authenticated'):
-    pwd = st.text_input("Admin Password", type="password")
-    if pwd == settings['admin_password']:
+    pwd = st.sidebar.text_input("Enter Password", type="password")
+    if pwd == settings.get('admin_password', 'admin'):
         st.session_state['authenticated'] = True
         st.rerun()
     else:
+        st.warning("Please login to manage the club.")
         st.stop()
 
-st.success("Authenticated")
+if st.sidebar.button("Logout"):
+    st.session_state['authenticated'] = False
+    st.rerun()
 
-col1, col2 = st.columns(2)
+# --- MAIN PAGE (Restored Leaderboard) ---
+st.title("🏃 Bramley Breezers Admin")
+
+col1, col2 = st.columns([2, 1])
+
 with col1:
-    st.subheader("Current Champ Standings (Cached)")
+    st.subheader("Current Championship Standings")
+    # New Cache Logic: Pull from cache first for speed
     cache = r.get("cached_champ_standings")
     if cache:
-        st.table(pd.read_json(cache))
+        league = pd.read_json(cache)
+        st.table(league)
     else:
-        st.info("No cache found. Rebuild via Championship page.")
+        st.info("No cache found. Click 'Refresh Cache' or approve a result.")
 
 with col2:
-    st.subheader("System Status")
-    st.write(f"**Age Mode:** {settings['age_mode']}")
-    if st.button("Manual Cache Refresh"):
-        from helpers import rebuild_leaderboard_cache
+    st.subheader("System Actions")
+    if st.button("🔄 Manual Refresh Leaderboard Cache"):
         rebuild_leaderboard_cache(r)
-        st.success("Global Cache Rebuilt!")
+        st.success("Cache Rebuilt!")
+
+    st.write(f"**Age Mode:** {settings.get('age_mode')}")
+    if settings.get('logo_url'):
+        st.image(settings['logo_url'], width=100)
