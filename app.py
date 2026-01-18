@@ -1,4 +1,4 @@
-# app.py - COMPLETE OPTIMIZED BBPB ADMIN
+# app.py - COMPLETE OPTIMIZED BBPB ADMIN WITH FULL CHAMPIONSHIP
 # ============================================================
 # SECTION 1: IMPORTS & SETUP
 # ============================================================
@@ -50,7 +50,6 @@ class RedisManager:
                     retry_on_timeout=True,
                     max_connections=5
                 )
-                # Quick ping test
                 self._connection.ping()
             except Exception as e:
                 st.error(f"⚠️ Redis connection failed: {str(e)[:100]}")
@@ -58,7 +57,6 @@ class RedisManager:
         return self._connection
     
     def get_cached(self, key: str, max_age: int = 60) -> Optional[Any]:
-        """Get from memory cache if not expired"""
         if key in self._cache:
             data, timestamp = self._cache[key]
             if (datetime.now() - timestamp).seconds < max_age:
@@ -66,26 +64,15 @@ class RedisManager:
         return None
     
     def set_cached(self, key: str, data: Any):
-        """Store in memory cache"""
         self._cache[key] = (data, datetime.now())
     
     def clear_cache(self, key_prefix: str = None):
-        """Clear cache entries"""
         if key_prefix:
             for k in list(self._cache.keys()):
                 if k.startswith(key_prefix):
                     del self._cache[k]
         else:
             self._cache.clear()
-    
-    def pipeline_execute(self, commands: List[Tuple[str, Any]]) -> List[Any]:
-        """Execute multiple Redis commands in pipeline"""
-        if not self.conn:
-            return []
-        pipe = self.conn.pipeline()
-        for cmd, *args in commands:
-            getattr(pipe, cmd)(*args)
-        return pipe.execute()
 
 # Global instance
 redis_mgr = RedisManager()
@@ -94,12 +81,10 @@ redis_mgr = RedisManager()
 # SECTION 3: AUTHENTICATION
 # ============================================================
 def require_auth():
-    """Check authentication, return True if authenticated"""
     if 'authenticated' not in st.session_state:
         st.session_state.authenticated = False
     
     if st.session_state.authenticated:
-        # Check session timeout (8 hours)
         if 'login_time' in st.session_state:
             session_age = datetime.now() - st.session_state.login_time
             if session_age > timedelta(hours=8):
@@ -109,7 +94,6 @@ def require_auth():
     return False
 
 def render_login():
-    """Render login form in sidebar"""
     with st.sidebar:
         st.title("🔐 BBPB Admin")
         
@@ -145,7 +129,6 @@ def render_login():
 # ============================================================
 @st.cache_data(ttl=300)
 def load_members(_redis_mgr: RedisManager) -> List[Dict]:
-    """Load all members from Redis"""
     r = _redis_mgr.conn
     if not r:
         return []
@@ -161,7 +144,6 @@ def load_members(_redis_mgr: RedisManager) -> List[Dict]:
 
 @st.cache_data(ttl=60)
 def load_race_results(_redis_mgr: RedisManager) -> List[Dict]:
-    """Load all race results from Redis"""
     r = _redis_mgr.conn
     if not r:
         return []
@@ -176,7 +158,6 @@ def load_race_results(_redis_mgr: RedisManager) -> List[Dict]:
     return results
 
 def get_member_dict() -> Dict[str, Dict]:
-    """Get members as lookup dictionary"""
     members = load_members(redis_mgr)
     return {m['name']: m for m in members}
 
@@ -184,16 +165,15 @@ def get_member_dict() -> Dict[str, Dict]:
 # SECTION 5: UTILITY FUNCTIONS
 # ============================================================
 def format_time_string(t_str: str) -> str:
-    """Format time as HH:MM:SS"""
     try:
         t_str = str(t_str).strip()
         if not t_str:
             return "00:00:00"
         
         parts = t_str.split(':')
-        if len(parts) == 2:  # MM:SS
+        if len(parts) == 2:
             return f"00:{parts[0].zfill(2)}:{parts[1].zfill(2)}"
-        elif len(parts) == 3:  # HH:MM:SS
+        elif len(parts) == 3:
             return f"{parts[0].zfill(2)}:{parts[1].zfill(2)}:{parts[2].zfill(2)}"
         else:
             return "00:00:00"
@@ -201,14 +181,13 @@ def format_time_string(t_str: str) -> str:
         return "00:00:00"
 
 def time_to_seconds(t_str: str) -> int:
-    """Convert time string to total seconds"""
     try:
         parts = list(map(int, str(t_str).split(':')))
-        if len(parts) == 3:  # HH:MM:SS
+        if len(parts) == 3:
             return parts[0] * 3600 + parts[1] * 60 + parts[2]
-        elif len(parts) == 2:  # MM:SS
+        elif len(parts) == 2:
             return parts[0] * 60 + parts[1]
-        elif len(parts) == 1:  # SS only
+        elif len(parts) == 1:
             return parts[0]
         else:
             return 999999
@@ -216,16 +195,13 @@ def time_to_seconds(t_str: str) -> int:
         return 999999
 
 def seconds_to_time(seconds: int) -> str:
-    """Convert seconds to HH:MM:SS string"""
     hours = seconds // 3600
     minutes = (seconds % 3600) // 60
     secs = seconds % 60
     return f"{hours:02d}:{minutes:02d}:{secs:02d}"
 
 def get_category(dob_str: str, race_date_str: str, age_mode: str = None) -> str:
-    """Calculate age category (from app.py logic)"""
     try:
-        # Get age mode from Redis if not provided
         if age_mode is None:
             r = redis_mgr.conn
             if r:
@@ -237,16 +213,14 @@ def get_category(dob_str: str, race_date_str: str, age_mode: str = None) -> str:
         dob = datetime.strptime(str(dob_str), '%Y-%m-%d')
         race_date = datetime.strptime(str(race_date_str), '%Y-%m-%d')
         
-        # Calculate age at race
         age = race_date.year - dob.year
         if (race_date.month, race_date.day) < (dob.month, dob.day):
             age -= 1
         
-        # Apply category logic from app.py
         if age_mode == "5Y":
             threshold = 35
             step = 5
-        else:  # "10Y"
+        else:
             threshold = 40
             step = 10
         
@@ -259,30 +233,26 @@ def get_category(dob_str: str, race_date_str: str, age_mode: str = None) -> str:
     except Exception as e:
         return "Unknown"
 
+def get_seconds(t_str: str) -> int:
+    """Alias for time_to_seconds for compatibility with 4_Championship.py"""
+    return time_to_seconds(t_str)
+
 def rebuild_leaderboard_cache():
-    """Rebuild and cache the PB leaderboard"""
     r = redis_mgr.conn
     if not r:
         return False
     
     try:
-        # Load raw data
         raw_results = r.lrange("race_results", 0, -1)
         if not raw_results:
             r.delete("cached_pb_leaderboard")
             return True
         
-        # Parse results
         results = [json.loads(res) for res in raw_results]
         df = pd.DataFrame(results)
-        
-        # Convert date
         df['race_date_dt'] = pd.to_datetime(df['race_date'])
-        
-        # Cache the processed DataFrame
         r.set("cached_pb_leaderboard", df.to_json())
         
-        # Clear memory cache
         redis_mgr.clear_cache("members_data")
         redis_mgr.clear_cache("race_results_data")
         st.cache_data.clear()
@@ -296,9 +266,7 @@ def rebuild_leaderboard_cache():
 # SECTION 6: SIDEBAR & NAVIGATION
 # ============================================================
 def render_sidebar():
-    """Render the application sidebar"""
     with st.sidebar:
-        # Logo
         r = redis_mgr.conn
         logo_url = None
         if r:
@@ -311,15 +279,12 @@ def render_sidebar():
         
         st.divider()
         
-        # Authentication check
         if not require_auth():
             render_login()
-            st.stop()  # Stop here if not authenticated
+            st.stop()
         
-        # User is authenticated from here
         st.success("✅ Authenticated")
         
-        # Logout button
         if st.button("🚪 Logout", use_container_width=True, type="secondary"):
             st.session_state.authenticated = False
             redis_mgr.clear_cache()
@@ -328,7 +293,6 @@ def render_sidebar():
         
         st.divider()
         
-        # Navigation
         st.subheader("📋 Navigation")
         
         tabs = [
@@ -356,7 +320,6 @@ def render_sidebar():
         
         st.divider()
         
-        # Quick Stats
         st.subheader("📊 Quick Stats")
         
         members = load_members(redis_mgr)
@@ -373,7 +336,6 @@ def render_sidebar():
         if left_count > 0:
             st.caption(f"Left: {left_count}")
         
-        # Refresh button
         st.divider()
         if st.button("🔄 Refresh All Data", use_container_width=True):
             redis_mgr.clear_cache()
@@ -386,20 +348,16 @@ def render_sidebar():
 # SECTION 7: TAB 1 - LEADERBOARD
 # ============================================================
 def render_leaderboard_tab():
-    """Render the PB leaderboard tab"""
     st.title("🏆 Personal Best Leaderboard")
     
-    # Check Redis connection
     r = redis_mgr.conn
     if not r:
         st.error("Redis connection unavailable")
         return
     
-    # Try to get cached leaderboard
     cached_json = r.get("cached_pb_leaderboard")
     
     if cached_json:
-        # Use cached data (FAST)
         try:
             df = pd.read_json(cached_json)
             cache_status = "✅ Using cached leaderboard"
@@ -408,7 +366,6 @@ def render_leaderboard_tab():
             cached_json = None
     
     if not cached_json:
-        # Build from scratch (SLOWER)
         with st.spinner("Building leaderboard from raw data..."):
             results = load_race_results(redis_mgr)
             if not results:
@@ -417,19 +374,14 @@ def render_leaderboard_tab():
             
             df = pd.DataFrame(results)
             df['race_date_dt'] = pd.to_datetime(df['race_date'])
-            
-            # Cache for next time
             r.set("cached_pb_leaderboard", df.to_json())
             cache_status = "🔄 Built new leaderboard cache"
     
-    # Show cache status in sidebar
     st.sidebar.caption(cache_status)
     
-    # Get active members for opacity
     members = load_members(redis_mgr)
     active_names = [m['name'] for m in members if m.get('status', 'Active') == 'Active']
     
-    # Year filter
     df['race_date_dt'] = pd.to_datetime(df['race_date'])
     years = ["All-Time"] + sorted(
         [str(y) for y in df['race_date_dt'].dt.year.unique()],
@@ -440,12 +392,10 @@ def render_leaderboard_tab():
     with col1:
         selected_year = st.selectbox("Select Season:", years, key="year_filter")
     
-    # Filter by year
     display_df = df.copy()
     if selected_year != "All-Time":
         display_df = display_df[display_df['race_date_dt'].dt.year == int(selected_year)]
     
-    # Add category column
     age_mode_setting = r.get("age_mode") or "5 Year"
     age_mode = "5Y" if "5" in age_mode_setting else "10Y"
     
@@ -454,12 +404,10 @@ def render_leaderboard_tab():
         axis=1
     )
     
-    # Show summary
     total_records = len(display_df)
     unique_members = display_df['name'].nunique()
     st.caption(f"Showing {total_records} results for {unique_members} members")
     
-    # Display by distance
     distances = ["5k", "10k", "10 Mile", "HM", "Marathon"]
     
     for distance in distances:
@@ -467,7 +415,6 @@ def render_leaderboard_tab():
         
         col_male, col_female = st.columns(2)
         
-        # Male column
         with col_male:
             st.markdown(
                 '<div style="background:#003366; color:white; padding:10px; border-radius:8px 8px 0 0; text-align:center; font-weight:bold; font-size:1.1em; border:2px solid #003366;">MALE</div>',
@@ -480,7 +427,6 @@ def render_leaderboard_tab():
             ]
             
             if not male_data.empty:
-                # Get leaders per category
                 leaders = male_data.sort_values('time_seconds').groupby('Category').head(1)
                 
                 for _, row in leaders.sort_values('Category').iterrows():
@@ -508,7 +454,6 @@ def render_leaderboard_tab():
                     unsafe_allow_html=True
                 )
         
-        # Female column
         with col_female:
             st.markdown(
                 '<div style="background:#FFD700; color:#003366; padding:10px; border-radius:8px 8px 0 0; text-align:center; font-weight:bold; font-size:1.1em; border:2px solid #003366;">FEMALE</div>',
@@ -554,16 +499,11 @@ def render_leaderboard_tab():
 # SECTION 8: TAB 2 - MEMBERS MANAGEMENT
 # ============================================================
 def render_members_tab():
-    """Render member management tab"""
     st.title("👥 Member Management")
     
-    # Load members
     members = load_members(redis_mgr)
-    
-    # Search box
     search_term = st.text_input("🔍 Search members by name", "")
     
-    # Add new member section
     with st.expander("➕ Add New Member", expanded=False):
         with st.form("add_member_form", clear_on_submit=True):
             col1, col2, col3 = st.columns(3)
@@ -582,50 +522,35 @@ def render_members_tab():
                             "name": new_name.strip(),
                             "dob": str(new_dob),
                             "gender": new_gender
-                            # Status not stored - all are Active unless marked Left
                         }
                         r.rpush("members", json.dumps(member_data))
-                        
-                        # Clear caches
                         redis_mgr.clear_cache("members_data")
                         st.cache_data.clear()
-                        
                         st.success(f"Added member: {new_name}")
                         time.sleep(1)
                         st.rerun()
-                    else:
-                        st.error("Redis connection failed")
     
     st.divider()
-    
-    # Display and edit members
     st.subheader(f"Members ({len(members)} total)")
     
     if not members:
         st.info("No members in database.")
         return
     
-    # Filter by search
     filtered_members = members
     if search_term:
         filtered_members = [m for m in members if search_term.lower() in m['name'].lower()]
         st.caption(f"Found {len(filtered_members)} members matching '{search_term}'")
     
-    # Sort alphabetically
     filtered_members.sort(key=lambda x: x['name'].lower())
     
-    # Display in expandable sections
     for idx, member in enumerate(filtered_members):
         member_key = f"member_{member['name'].replace(' ', '_')}_{idx}"
-        
-        # Determine status (default Active)
         status = member.get('status', 'Active')
         status_emoji = "✅" if status == 'Active' else "🚫"
         
         with st.expander(f"{status_emoji} {member['name']} ({member['gender']}, {member['dob']})", 
                         expanded=False):
-            
-            # Edit form
             with st.form(f"edit_form_{member_key}"):
                 col1, col2, col3, col4 = st.columns([3, 2, 2, 2])
                 
@@ -642,33 +567,26 @@ def render_members_tab():
                 
                 with col5:
                     if st.form_submit_button("💾 Save Changes", use_container_width=True):
-                        # Validate
                         if not edit_name or not edit_dob:
                             st.error("Name and DOB are required")
                         else:
                             r = redis_mgr.conn
                             if r:
-                                # Update in Redis list
                                 updated_member = {
                                     "name": edit_name.strip(),
                                     "dob": edit_dob,
                                     "gender": edit_gender,
                                     "status": edit_status
                                 }
-                                
-                                # Find and replace in list
                                 raw_members = r.lrange("members", 0, -1)
                                 for i, raw_member in enumerate(raw_members):
                                     m = json.loads(raw_member)
                                     if m['name'] == member['name']:
                                         r.lset("members", i, json.dumps(updated_member))
                                         break
-                                
-                                # Clear caches
                                 redis_mgr.clear_cache("members_data")
                                 redis_mgr.clear_cache("cached_pb_leaderboard")
                                 st.cache_data.clear()
-                                
                                 st.success(f"Updated {edit_name}")
                                 time.sleep(1)
                                 st.rerun()
@@ -677,19 +595,15 @@ def render_members_tab():
                     if st.form_submit_button("🗑️ Delete Member", use_container_width=True, type="secondary"):
                         r = redis_mgr.conn
                         if r:
-                            # Find and remove from list
                             raw_members = r.lrange("members", 0, -1)
                             for raw_member in raw_members:
                                 m = json.loads(raw_member)
                                 if m['name'] == member['name']:
                                     r.lrem("members", 1, raw_member)
                                     break
-                            
-                            # Clear caches
                             redis_mgr.clear_cache("members_data")
                             redis_mgr.clear_cache("cached_pb_leaderboard")
                             st.cache_data.clear()
-                            
                             st.warning(f"Deleted {member['name']}")
                             time.sleep(1)
                             st.rerun()
@@ -698,7 +612,6 @@ def render_members_tab():
 # SECTION 9: TAB 3 - PB SUBMISSIONS
 # ============================================================
 def render_submissions_tab():
-    """Render PB submissions approval tab"""
     st.title("📥 PB Submissions Approval")
     
     r = redis_mgr.conn
@@ -706,7 +619,6 @@ def render_submissions_tab():
         st.error("Redis connection unavailable")
         return
     
-    # Load pending submissions
     pending_raw = r.lrange("pending_results", 0, -1)
     pending = [json.loads(p) for p in pending_raw]
     
@@ -715,8 +627,6 @@ def render_submissions_tab():
         return
     
     st.subheader(f"Pending Submissions ({len(pending)})")
-    
-    # Load members for lookup
     member_dict = get_member_dict()
     
     for idx, submission in enumerate(pending):
@@ -729,16 +639,13 @@ def render_submissions_tab():
                 st.caption(f"Date: {submission['race_date']}")
             
             with col2:
-                # Check if member exists
                 member_info = member_dict.get(submission['name'])
                 
                 if not member_info:
                     st.error("Member not found")
                     continue
                 
-                # Approve button
                 if st.button("✅ Approve", key=f"approve_{idx}", use_container_width=True):
-                    # Create race result entry
                     race_entry = {
                         "name": submission['name'],
                         "gender": member_info['gender'],
@@ -749,23 +656,15 @@ def render_submissions_tab():
                         "location": submission['location'],
                         "race_date": submission['race_date']
                     }
-                    
-                    # Add to race results
                     r.rpush("race_results", json.dumps(race_entry))
-                    
-                    # Remove from pending
                     r.lrem("pending_results", 1, json.dumps(submission))
-                    
-                    # Clear caches
                     redis_mgr.clear_cache("race_results_data")
                     redis_mgr.clear_cache("cached_pb_leaderboard")
                     st.cache_data.clear()
-                    
                     st.success(f"Approved PB for {submission['name']}")
                     time.sleep(1)
                     st.rerun()
                 
-                # Reject button
                 if st.button("❌ Reject", key=f"reject_{idx}", use_container_width=True, type="secondary"):
                     r.lrem("pending_results", 1, json.dumps(submission))
                     st.warning(f"Rejected submission for {submission['name']}")
@@ -776,10 +675,8 @@ def render_submissions_tab():
 # SECTION 10: TAB 4 - RACE LOG
 # ============================================================
 def render_racelog_tab():
-    """Render race log management tab"""
     st.title("📋 Race Log Management")
     
-    # Load data
     results = load_race_results(redis_mgr)
     
     if not results:
@@ -787,15 +684,10 @@ def render_racelog_tab():
         return
     
     st.subheader(f"Race Results ({len(results)} total)")
-    
-    # Convert to DataFrame for display
     df = pd.DataFrame(results)
-    
-    # Add calculated columns for display
     df['date_dt'] = pd.to_datetime(df['race_date'])
     df = df.sort_values('date_dt', ascending=False)
     
-    # Search and filter
     col1, col2, col3 = st.columns(3)
     with col1:
         search_name = st.text_input("Search by name", "")
@@ -805,28 +697,23 @@ def render_racelog_tab():
     with col3:
         items_per_page = st.selectbox("Results per page", [10, 25, 50, 100], index=1)
     
-    # Apply filters
     filtered_df = df.copy()
     if search_name:
         filtered_df = filtered_df[filtered_df['name'].str.contains(search_name, case=False, na=False)]
     if filter_distance != "All":
         filtered_df = filtered_df[filtered_df['distance'] == filter_distance]
     
-    # Pagination
     total_pages = max(1, (len(filtered_df) + items_per_page - 1) // items_per_page)
     page_number = st.number_input("Page", min_value=1, max_value=total_pages, value=1)
     
     start_idx = (page_number - 1) * items_per_page
     end_idx = min(start_idx + items_per_page, len(filtered_df))
     
-    # Display current page
     st.caption(f"Showing {start_idx + 1}-{end_idx} of {len(filtered_df)} results")
     
-    # Edit/Delete interface
     for idx in range(start_idx, end_idx):
         result = filtered_df.iloc[idx]
         
-        # Find original index in Redis list
         r = redis_mgr.conn
         if not r:
             continue
@@ -857,17 +744,13 @@ def render_racelog_tab():
                     if redis_idx is not None:
                         r.lset("race_results", redis_idx, "DELETE_ME")
                         r.lrem("race_results", 1, "DELETE_ME")
-                        
-                        # Clear caches
                         redis_mgr.clear_cache("race_results_data")
                         redis_mgr.clear_cache("cached_pb_leaderboard")
                         st.cache_data.clear()
-                        
                         st.success(f"Deleted race result for {result['name']}")
                         time.sleep(1)
                         st.rerun()
             
-            # Edit form (if opened)
             if st.session_state.get(edit_key, False):
                 with st.form(f"edit_race_form_{redis_idx}"):
                     col1, col2, col3 = st.columns(3)
@@ -886,7 +769,6 @@ def render_racelog_tab():
                         if not all([edit_name, edit_time, edit_location, edit_date]):
                             st.error("All fields are required")
                         else:
-                            # Get member info
                             member_dict = get_member_dict()
                             member_info = member_dict.get(edit_name)
                             
@@ -903,103 +785,238 @@ def render_racelog_tab():
                                     "location": edit_location,
                                     "race_date": edit_date
                                 }
-                                
-                                # Update in Redis
                                 if redis_idx is not None:
                                     r.lset("race_results", redis_idx, json.dumps(updated_entry))
-                                
-                                # Clear caches
                                 redis_mgr.clear_cache("race_results_data")
                                 redis_mgr.clear_cache("cached_pb_leaderboard")
                                 st.cache_data.clear()
-                                
                                 st.success("Race result updated")
                                 st.session_state[edit_key] = False
                                 time.sleep(1)
                                 st.rerun()
 
 # ============================================================
-# SECTION 11: TAB 5 - CHAMPIONSHIP (BASIC VERSION)
+# SECTION 11: TAB 5 - CHAMPIONSHIP (COMPLETE FROM 4_Championship.py)
 # ============================================================
 def render_championship_tab():
-    """Render championship management tab"""
-    st.title("🎖️ Championship Management")
+    """Complete championship system from 4_Championship.py"""
+    st.title("🏅 Championship Management")
     
     r = redis_mgr.conn
     if not r:
         st.error("Redis connection unavailable")
         return
     
-    # Create tabs for championship features
+    # Load essential data
+    raw_mems = r.lrange("members", 0, -1)
+    member_db = {json.loads(m)['name']: json.loads(m) for m in raw_mems}
+    
+    # Get calendar
+    cal_raw = r.get("champ_calendar_2026")
+    if cal_raw:
+        champ_calendar = json.loads(cal_raw)
+    else:
+        # Create default calendar
+        champ_calendar = []
+        for i in range(15):
+            if i == 14:  # Race 15
+                champ_calendar.append({
+                    "name": "Any Marathon (Power of 10)",
+                    "date": "Any 2026 Marathon",
+                    "distance": "Marathon",
+                    "terrain": "Road"
+                })
+            else:
+                champ_calendar.append({
+                    "name": f"Race {i+1}",
+                    "date": "TBC",
+                    "distance": "TBC",
+                    "terrain": "Road"
+                })
+    
+    # Create tabs matching 4_Championship.py
     tab1, tab2, tab3, tab4 = st.tabs([
-        "📅 Calendar", 
-        "⏱️ Winner Times", 
-        "📥 Submissions", 
-        "📊 Standings"
+        "📥 Pending Approvals", 
+        "🗓️ Calendar Setup", 
+        "📊 Championship Log", 
+        "🏆 Leaderboard"
     ])
     
+    # ========== TAB 1: PENDING APPROVALS ==========
     with tab1:
-        st.subheader("Championship Calendar 2026")
+        st.subheader("📥 Championship Submissions Pending Approval")
         
-        # Load or create calendar
-        cal_json = r.get("champ_calendar_2026")
-        if cal_json:
-            calendar = json.loads(cal_json)
+        # Load pending submissions
+        pending_raw = r.lrange("champ_pending", 0, -1)
+        pending = [json.loads(p) for p in pending_raw]
+        
+        if not pending:
+            st.info("No pending championship results.")
         else:
-            # Create default calendar
-            calendar = []
-            for i in range(15):
-                if i == 14:  # Race 15
-                    calendar.append({
-                        "name": "Any Marathon (Power of 10)",
-                        "date": "Any 2026 Marathon",
-                        "distance": "Marathon",
-                        "terrain": "Road"
-                    })
-                else:
-                    calendar.append({
-                        "name": f"Race {i+1}",
-                        "date": "TBC",
-                        "distance": "TBC",
-                        "terrain": "Road"
-                    })
+            for i, p_raw in enumerate(pending):
+                p = json.loads(p_raw)
+                with st.expander(f"Review: {p['name']} - {p.get('race_name', 'Unknown Race')}"):
+                    st.write(f"**Submitted Time:** {p['time_display']}")
+                    st.write(f"**Submitted Date/Location:** {p.get('date', 'Unknown')} / {p.get('race_name', 'Unknown')}")
+                    
+                    if not champ_calendar:
+                        st.error("Setup the calendar in the next tab first.")
+                        continue
+                    
+                    # Race selection
+                    race_options = [f"Race {idx+1}: {rc.get('name')}" for idx, rc in enumerate(champ_calendar)]
+                    sel_race_str = st.selectbox("Assign to Calendar Race", race_options, key=f"conf_race_{i}")
+                    race_idx = race_options.index(sel_race_str)
+                    is_race_15 = (race_idx == 14)
+                    
+                    col1, col2 = st.columns(2)
+                    
+                    # Winner time input
+                    win_time = col1.text_input(f"Winner's Time (HH:MM:SS)", "00:00:00", key=f"win_{i}")
+                    runner_sec = get_seconds(p['time_display'])
+                    winner_sec = get_seconds(win_time)
+                    
+                    # Points calculation (from 4_Championship.py)
+                    calc_pts = round((winner_sec / runner_sec) * 100, 2) if winner_sec > 0 else 0.0
+                    pts = col2.number_input("Final Points to Award", 0.0, 200.0, calc_pts, key=f"pts_{i}")
+                    st.caption(f"Calculated based on winner: {calc_pts:.2f}")
+                    
+                    st.markdown("---")
+                    
+                    # Option to add to PB leaderboard
+                    log_pb = st.checkbox("Also add to Main PB Leaderboard?", value=True, key=f"log_pb_{i}")
+                    
+                    if is_race_15:
+                        st.warning("🏆 Race 15 (Any Marathon) detected. Locked to 'Marathon' PB Category.")
+                        pb_dist = "Marathon"
+                    else:
+                        pb_dist = st.selectbox("PB Category", ["5k", "10k", "10 Mile", "HM", "Marathon"], 
+                                             key=f"pb_dist_{i}")
+                    
+                    # Approve button
+                    if st.button("✅ Approve Result", key=f"app_{i}", type="primary"):
+                        # Get member info
+                        m_info = member_db.get(p['name'], {})
+                        if not m_info:
+                            st.error(f"Member {p['name']} not found in database")
+                            continue
+                        
+                        # Determine date
+                        if is_race_15:
+                            final_date = p.get('date', '2026-01-01')
+                        else:
+                            final_date = champ_calendar[race_idx].get('date', '2026-01-01')
+                        
+                        # Calculate category
+                        settings_raw = r.get("club_settings")
+                        if settings_raw:
+                            settings = json.loads(settings_raw)
+                            age_mode = settings.get('age_mode', '5 Year')
+                        else:
+                            age_mode = '5 Year'
+                        
+                        cat = get_category(m_info.get('dob', '2000-01-01'), final_date, 
+                                         "5Y" if "5" in age_mode else "10Y")
+                        
+                        # Create championship entry
+                        champ_entry = {
+                            "name": p['name'], 
+                            "race_name": p.get('race_name', champ_calendar[race_idx].get('name', 'Unknown')),
+                            "date": final_date,
+                            "points": pts,
+                            "category": cat,
+                            "gender": m_info.get('gender', 'U')
+                        }
+                        
+                        # Save to championship results
+                        r.rpush("champ_results_final", json.dumps(champ_entry))
+                        
+                        # Optionally add to PB leaderboard
+                        if log_pb:
+                            pb_entry = {
+                                "name": p['name'],
+                                "distance": pb_dist,
+                                "location": p.get('race_name', 'Unknown'),
+                                "race_date": final_date,
+                                "time_display": p['time_display'],
+                                "time_seconds": runner_sec,
+                                "gender": m_info.get('gender', 'U'),
+                                "dob": m_info.get('dob', '2000-01-01')
+                            }
+                            r.rpush("race_results", json.dumps(pb_entry))
+                        
+                        # Rebuild caches
+                        rebuild_leaderboard_cache()
+                        
+                        # Remove from pending
+                        r.lset("champ_pending", i, "WIPE")
+                        r.lrem("champ_pending", 1, "WIPE")
+                        
+                        st.success(f"Approved {p['name']}!")
+                        time.sleep(2)
+                        st.rerun()
+    
+    # ========== TAB 2: CALENDAR SETUP ==========
+    with tab2:
+        st.subheader("🗓️ 15-Race Championship Calendar Setup")
         
-        # Edit calendar
-        with st.form("calendar_form"):
-            updated_calendar = []
+        if len(champ_calendar) < 15:
+            champ_calendar = [{"name": "TBC", "date": "TBC", "distance": "TBC", "terrain": "Road"} for _ in range(15)]
+        
+        with st.form("cal_form"):
+            updated_cal = []
             
             for i in range(15):
                 st.markdown(f"**Race {i+1}**")
-                race = calendar[i] if i < len(calendar) else {}
+                race = champ_calendar[i] if i < len(champ_calendar) else {}
                 
-                col1, col2, col3, col4 = st.columns(4)
+                c1, c2, c3, c4, c5 = st.columns([3, 2, 2, 2, 1])
                 
-                if i == 14:  # Race 15 is fixed
-                    name = col1.text_input("Name", "Any Marathon (Power of 10)", 
-                                          key=f"name_{i}", disabled=True)
-                    date_val = col2.text_input("Date", "Any 2026 Marathon", 
-                                              key=f"date_{i}", disabled=True)
-                    distance = col3.text_input("Distance", "Marathon", 
-                                              key=f"dist_{i}", disabled=True)
-                    terrain = col4.selectbox("Terrain", ["Road"], 
-                                           key=f"terr_{i}", disabled=True)
+                # Race 15 is fixed as Marathon
+                if i == 14:
+                    name = c1.text_input("Name", "Any Marathon (Power of 10)", 
+                                        key=f"n_{i}", disabled=True)
+                    is_tbc = False
+                    date_val = "Any 2026 Marathon"
+                    distance = "Marathon"
+                    terrain = "Road"
+                    c2.info("Any 2026 Marathon")
+                    c3.info("Marathon")
+                    c4.info("Road")
                 else:
-                    name = col1.text_input("Name", race.get("name", f"Race {i+1}"), 
-                                          key=f"name_{i}")
-                    date_val = col2.text_input("Date (YYYY-MM-DD or TBC)", 
-                                              race.get("date", "TBC"), key=f"date_{i}")
-                    distance = col3.selectbox("Distance", 
-                                             ["5k", "10k", "10 Mile", "HM", "Marathon", "TBC"],
-                                             index=["5k", "10k", "10 Mile", "HM", "Marathon", "TBC"]
-                                             .index(race.get("distance", "TBC")),
-                                             key=f"dist_{i}")
-                    terrain = col4.selectbox("Terrain", 
-                                            ["Road", "Trail", "Fell", "XC", "TBC"],
-                                            index=["Road", "Trail", "Fell", "XC", "TBC"]
-                                            .index(race.get("terrain", "Road")),
-                                            key=f"terr_{i}")
+                    name = c1.text_input("Name", race.get("name", f"Race {i+1}"), 
+                                        key=f"n_{i}")
+                    is_tbc = c5.checkbox("TBC", value=(race.get('date') == "TBC"), 
+                                        key=f"tbc_{i}")
+                    
+                    if is_tbc:
+                        date_val = "TBC"
+                        distance = "TBC"
+                        terrain = "TBC"
+                        c2.info("TBC")
+                        c3.info("TBC")
+                        c4.info("TBC")
+                    else:
+                        # Try to parse existing date
+                        try:
+                            d_val = datetime.strptime(race.get('date', '2026-01-01'), '%Y-%m-%d')
+                        except:
+                            d_val = datetime(2026, 1, 1)
+                        
+                        date_val = c2.date_input("Date", d_val, key=f"d_{i}", label_visibility="collapsed")
+                        distance = c3.selectbox("Distance", 
+                                              ["5k", "10k", "10 Mile", "HM", "Marathon"],
+                                              index=["5k", "10k", "10 Mile", "HM", "Marathon"]
+                                              .index(race.get('distance', '5k')) if race.get('distance') != "TBC" else 0,
+                                              key=f"dist_{i}", label_visibility="collapsed")
+                        terrain = c4.selectbox("Terrain", 
+                                             ["Road", "Trail", "Fell", "XC"],
+                                             index=["Road", "Trail", "Fell", "XC"]
+                                             .index(race.get('terrain', 'Road')) if race.get('terrain') != "TBC" else 0,
+                                             key=f"terr_{i}", label_visibility="collapsed")
+                        date_val = str(date_val)
                 
-                updated_calendar.append({
+                updated_cal.append({
                     "name": name,
                     "date": date_val,
                     "distance": distance,
@@ -1009,39 +1026,81 @@ def render_championship_tab():
                 st.divider()
             
             if st.form_submit_button("💾 Save Calendar", type="primary"):
-                r.set("champ_calendar_2026", json.dumps(updated_calendar))
-                st.success("Calendar saved!")
+                r.set("champ_calendar_2026", json.dumps(updated_cal))
+                rebuild_leaderboard_cache()
+                st.success("Calendar Saved and Cache Rebuilt!")
                 time.sleep(1)
                 st.rerun()
     
-    with tab2:
-        st.subheader("Winner Times Setup")
-        st.info("This page will allow setting winner times per category/gender for each race.")
-        st.write("Feature to be implemented based on your category structure.")
-    
+    # ========== TAB 3: CHAMPIONSHIP LOG ==========
     with tab3:
-        st.subheader("Championship Submissions")
+        st.subheader("📊 Championship Results Log")
         
-        # Load pending championship submissions
-        pending_raw = r.lrange("champ_pending", 0, -1)
-        pending = [json.loads(p) for p in pending_raw]
-        
-        if not pending:
-            st.info("No pending championship submissions.")
+        # Load final results
+        final_raw = r.lrange("champ_results_final", 0, -1)
+        if not final_raw:
+            st.info("No championship results yet.")
         else:
-            st.write(f"Pending submissions: {len(pending)}")
-            # Implementation would go here
+            data = [json.loads(x) for x in final_raw]
+            df = pd.DataFrame(data)
+            st.dataframe(df, use_container_width=True)
+            
+            # Edit and Delete functionality
+            e_col, d_col = st.columns(2)
+            
+            with e_col:
+                with st.expander("📝 Edit Result"):
+                    if len(df) > 0:
+                        idx = st.number_input("Index to Edit", 0, len(df)-1, 0, key="c_edit_idx")
+                        result_to_edit = data[idx]
+                        
+                        with st.form("c_edit_form"):
+                            new_pts = st.number_input("Points", 0.0, 200.0, float(result_to_edit.get('points', 0)))
+                            new_cat = st.text_input("Category", result_to_edit.get('category', 'Unknown'))
+                            
+                            if st.form_submit_button("Save Changes"):
+                                result_to_edit['points'] = new_pts
+                                result_to_edit['category'] = new_cat
+                                r.lset("champ_results_final", int(idx), json.dumps(result_to_edit))
+                                rebuild_leaderboard_cache()
+                                st.success("Updated!")
+                                time.sleep(1)
+                                st.rerun()
+            
+            with d_col:
+                with st.expander("🗑️ Delete Result"):
+                    if len(df) > 0:
+                        del_idx = st.number_input("Index to Delete", 0, len(df)-1, 0, key="c_del_idx")
+                        
+                        if st.button("Confirm Deletion", type="secondary"):
+                            r.lset("champ_results_final", int(del_idx), "WIPE")
+                            r.lrem("champ_results_final", 1, "WIPE")
+                            rebuild_leaderboard_cache()
+                            st.success("Deleted!")
+                            time.sleep(1)
+                            st.rerun()
     
+    # ========== TAB 4: LEADERBOARD ==========
     with tab4:
-        st.subheader("Championship Standings")
-        st.info("Standings will be calculated once winner times are set.")
-        st.write("Feature to be implemented.")
+        st.subheader("🏆 Championship Standings")
+        
+        # Try to get cached standings
+        cache = r.get("cached_champ_standings")
+        if cache:
+            try:
+                standings_df = pd.read_json(cache)
+                st.dataframe(standings_df, use_container_width=True)
+            except:
+                st.info("Standings cache corrupted. Rebuilding...")
+                cache = None
+        
+        if not cache:
+            st.info("Standings not yet generated. Approve some championship results first.")
 
 # ============================================================
 # SECTION 12: TAB 6 - SYSTEM TOOLS
 # ============================================================
 def render_system_tab():
-    """Render system tools tab"""
     st.title("⚙️ System Tools")
     
     r = redis_mgr.conn
@@ -1049,7 +1108,6 @@ def render_system_tab():
         st.error("Redis connection unavailable")
         return
     
-    # Create tabs for different system functions
     tab1, tab2, tab3, tab4 = st.tabs([
         "🔧 Settings", 
         "💾 Export", 
@@ -1060,7 +1118,6 @@ def render_system_tab():
     with tab1:
         st.subheader("Club Settings")
         
-        # Load current settings
         settings_json = r.get("club_settings")
         if settings_json:
             settings = json.loads(settings_json)
@@ -1094,17 +1151,14 @@ def render_system_tab():
                     "age_mode": "5 Year" if "5" in age_mode else "10 Year"
                 }
                 
-                # Save to Redis
                 r.set("club_settings", json.dumps(updated_settings))
                 r.set("age_mode", "5Y" if "5" in age_mode else "10Y")
                 if logo_url:
                     r.set("club_logo_url", logo_url)
                     r.set("logo_url", logo_url)
                 
-                # Clear caches
                 redis_mgr.clear_cache()
                 st.cache_data.clear()
-                
                 st.success("Settings saved!")
                 time.sleep(1)
                 st.rerun()
@@ -1134,7 +1188,6 @@ def render_system_tab():
             if st.button("📥 Export Race Results", use_container_width=True):
                 results = load_race_results(redis_mgr)
                 if results:
-                    # Create simplified export (without internal fields)
                     export_data = []
                     for r in results:
                         export_data.append({
@@ -1144,7 +1197,6 @@ def render_system_tab():
                             "race_date": r['race_date'],
                             "time_display": r['time_display']
                         })
-                    
                     df = pd.DataFrame(export_data)
                     csv = df.to_csv(index=False)
                     st.download_button(
@@ -1159,14 +1211,26 @@ def render_system_tab():
         
         with col3:
             if st.button("📥 Export Championship", use_container_width=True):
-                # This would export championship data
-                st.info("Championship export to be implemented")
+                champ_raw = r.lrange("champ_results_final", 0, -1)
+                if champ_raw:
+                    champ_data = [json.loads(c) for c in champ_raw]
+                    df = pd.DataFrame(champ_data)
+                    csv = df.to_csv(index=False)
+                    st.download_button(
+                        label="Download Championship CSV",
+                        data=csv,
+                        file_name="bbpb_championship.csv",
+                        mime="text/csv",
+                        key="export_champ"
+                    )
+                else:
+                    st.warning("No championship results to export")
     
     with tab3:
         st.subheader("Data Import")
         
         import_type = st.selectbox("Select import type", 
-                                 ["Members CSV", "Race Results CSV"])
+                                 ["Members CSV", "Race Results CSV", "Championship CSV"])
         
         uploaded_file = st.file_uploader(f"Choose {import_type} file", 
                                         type="csv")
@@ -1178,7 +1242,6 @@ def render_system_tab():
             
             if st.button("Import Data", type="primary"):
                 if import_type == "Members CSV":
-                    # Import members
                     imported = 0
                     for _, row in df.iterrows():
                         member_data = {
@@ -1189,14 +1252,11 @@ def render_system_tab():
                         if member_data['name']:
                             r.rpush("members", json.dumps(member_data))
                             imported += 1
-                    
                     st.success(f"Imported {imported} members")
                 
                 elif import_type == "Race Results CSV":
-                    # Import race results
                     member_dict = get_member_dict()
                     imported = 0
-                    
                     for _, row in df.iterrows():
                         name = str(row.get('name', '')).strip()
                         if name in member_dict:
@@ -1213,10 +1273,24 @@ def render_system_tab():
                             }
                             r.rpush("race_results", json.dumps(race_entry))
                             imported += 1
-                    
                     st.success(f"Imported {imported} race results")
                 
-                # Clear caches
+                elif import_type == "Championship CSV":
+                    imported = 0
+                    for _, row in df.iterrows():
+                        champ_entry = {
+                            "name": str(row.get('name', '')).strip(),
+                            "race_name": str(row.get('race_name', 'Unknown')),
+                            "date": str(row.get('date', '2026-01-01')),
+                            "points": float(row.get('points', 0)),
+                            "category": str(row.get('category', 'Unknown')),
+                            "gender": str(row.get('gender', 'U'))
+                        }
+                        if champ_entry['name']:
+                            r.rpush("champ_results_final", json.dumps(champ_entry))
+                            imported += 1
+                    st.success(f"Imported {imported} championship results")
+                
                 redis_mgr.clear_cache()
                 st.cache_data.clear()
                 time.sleep(2)
@@ -1243,7 +1317,6 @@ def render_system_tab():
         
         st.divider()
         
-        # Danger zone
         with st.expander("⚠️ Danger Zone", expanded=False):
             st.warning("These actions cannot be undone!")
             
@@ -1259,16 +1332,12 @@ def render_system_tab():
             
             if st.button("🔥 Reset Entire System", type="secondary"):
                 if st.checkbox("I understand this will reset ALL data except settings"):
-                    # Keep only settings and password
                     settings = r.get("club_settings")
                     password = r.get("admin_password")
-                    
-                    # Delete all keys except settings
                     keys = r.keys("*")
                     for key in keys:
                         if key not in ["club_settings", "admin_password", "club_logo_url", "logo_url", "age_mode"]:
                             r.delete(key)
-                    
                     redis_mgr.clear_cache()
                     st.cache_data.clear()
                     st.error("System reset complete!")
@@ -1279,18 +1348,13 @@ def render_system_tab():
 # SECTION 13: MAIN APPLICATION CONTROLLER
 # ============================================================
 def main():
-    """Main application entry point"""
-    
-    # Initialize session state
     if 'authenticated' not in st.session_state:
         st.session_state.authenticated = False
     if 'current_tab' not in st.session_state:
         st.session_state.current_tab = "leaderboard"
     
-    # Render sidebar (includes auth check)
     render_sidebar()
     
-    # Get current tab and render
     current_tab = st.session_state.get("current_tab", "leaderboard")
     
     if current_tab == "leaderboard":
